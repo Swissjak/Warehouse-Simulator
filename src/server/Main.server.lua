@@ -1,1 +1,3 @@
-print("Warehouse Server started")
+local RackGenerator = require(script.Parent.RackGenerator)
+
+RackGenerator.Generate()
