@@ -1,0 +1,23 @@
+# Roblox Studio place/model files (world remains Studio-authored)
+*.rbxl
+*.rbxlx
+*.rbxm
+*.rbxmx
+
+# Temporary Rojo outputs
+rojo-test.rbxl
+rojo-test.rbxlx
+sourcemap.json
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.tmp
+*.log
+
+# Local editor settings
+.vscode/
+
+# Scratch
+scratch/
+tmp/

@@ -1,0 +1,1 @@
+print("Warehouse Server started")

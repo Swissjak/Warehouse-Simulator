@@ -1,0 +1,1 @@
+print("Warehouse Client started")
