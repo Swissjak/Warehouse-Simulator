@@ -1,5 +1,7 @@
 # Stage 01 — Rack Generator
 
+**Status: Complete and Studio-tested.**
+
 ## Goal
 Generate rack geometry and deterministic storage addresses from manually placed RackZone parts and Studio-authored rack templates.
 
@@ -69,8 +71,8 @@ Examples:
 - 387 → 19
 
 ## RackV1L / RackV1R
-5 floors.
-3 `PalletSlot` positions per floor.
+Floors are discovered dynamically from direct `Floor<number>` children.
+Each discovered floor contains 3 `PalletSlot` positions.
 `SlotType="Pallet"`
 `MaxHeight=8`
 
@@ -81,10 +83,12 @@ Floors 1–2:
 - `SlotType="Box"`
 - `MaxHeight=3`
 
-Floors 3–5:
+Floor 3 and higher:
 - 3 `PalletSlot` positions;
 - `SlotType="Pallet"`
 - `MaxHeight=8`
+
+The registry does not assume a fixed floor count. Floors and slots are sorted by their numeric suffixes rather than `GetChildren()` order.
 
 ## Sticker references
 Template Sticker objects are positional references only.
@@ -94,7 +98,7 @@ Barcode may be generic/shared.
 Do not implement OCR/barcode recognition.
 
 ## RackNumberPlate
-Rack-number display is deferred to Stage 01C. Stage 01A does not generate or place RackNumberPlate objects.
+Stage 01A does not generate or place RackNumberPlate objects. Stage 01C.2 creates them from the authored `ServerStorage.RackAssets.NumberPlate` source without modifying rack prefab geometry.
 
 # 01A — Geometry Generator
 
@@ -147,12 +151,16 @@ Only after this passes, start 01B.
 
 # 01B — Slot Registry
 
-1. Traverse generated floors and slots.
+**Status: Complete and Studio-tested.**
+
+1. Traverse direct generated floors and slots by validated numeric names.
 2. Generate SlotId `Rack-Bay-Floor-Slot`.
 3. Preserve SlotType.
 4. Preserve MaxHeight.
 5. Inherit StorageCategory from RackZone.
-6. Store metadata in a clean server-authoritative representation.
+6. Store metadata in the server-authoritative `SlotRegistry` runtime representation.
+7. Apply `SlotId`, address components, storage semantics, and category attributes to each existing generated Slot instance.
+8. Rebuild after rack generation so stale references are discarded.
 
 Example:
 - SlotId `1-7-2-3`
@@ -173,22 +181,40 @@ Acceptance:
 - stable IDs;
 - V1 only Pallet;
 - V2 floors 1–2 Box;
-- V2 floors 3–5 Pallet;
+- V2 floor 3 and higher Pallet;
 - category propagates.
 
 # 01C — Labels and number plate
 
-1. Create/update visible location text at Sticker references.
-2. Text equals SlotId.
-3. Keep generic barcode if present.
-4. Add machine-readable SlotId metadata to label/scan target.
-5. Display RackId on RackNumberPlate.
-6. Avoid duplicate rack-number plates from section cloning.
+**Status: Complete and Studio-tested.**
+
+## 01C.1 — Visible Slot Addresses
+
+`RackLabelService.ApplyAll()` runs after `SlotRegistry.Rebuild()`.
+
+1. Match each `Slot<number>` only to the direct sibling `Sticker<number>` with the same numeric suffix.
+2. Add machine-readable `SlotId` metadata to the Sticker.
+3. Create or reuse `SlotSurfaceGui/SlotText` and display only the SlotId.
+4. Use the explicit authored L/R face mapping and rotate only the text for horizontal floor labels.
+5. Do not use world distance, child order, OCR, or barcode recognition.
+
+## 01C.2 — Rack Number Plates
+
+`RackNumberService.ApplyAll()` runs after rack generation.
+
+1. Clone the authored `ServerStorage.RackAssets.NumberPlate` Part as the only visual template.
+2. Maintain exactly two service-managed plates under `Rack_<RackId>/NumberPlates/Start` and `End`.
+3. Place them from the two physical local-X endpoints of the matching RackZone, centered laterally at a center height of 14.04 studs with the authored 0.24-stud inset.
+4. Orient the two Parts outward in opposite directions without changing rack or prefab geometry.
+5. Create or reuse `RackNumberSurfaceGui/RackNumberText` and display only RackId.
+6. Apply `RackId` and `RackEnd` metadata and remain idempotent on repeated calls.
 
 Acceptance:
-- sticker text matches physical slot;
-- RackNumberPlate is correct;
-- rotated racks keep readable/correct labels;
+- Sticker text matches the physical Slot on all four authored prefab variants;
+- L/R face mapping and horizontal floor-label text rotation are readable from the aisle;
+- exactly two outward-facing Rack Number Plates display the correct RackId on each generated rack;
+- rotated racks keep readable and correctly placed labels;
+- repeated application creates no duplicate UI or plates;
 - no duplicate SlotIds.
 
 ## Error handling
