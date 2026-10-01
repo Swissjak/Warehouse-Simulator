@@ -27,35 +27,6 @@ local function isFiniteNumber(value: unknown): boolean
 	return typeof(value) == "number" and value == value and math.abs(value) < math.huge
 end
 
-local function formatDiagnosticValue(value: unknown): string
-	if value == nil then
-		return "<nil>"
-	end
-
-	return tostring(value)
-end
-
-local function printZoneDiagnostic(instance: Instance, isValidRackZone: boolean)
-	local position = "<n/a>"
-	local size = "<n/a>"
-	if instance:IsA("BasePart") then
-		position = tostring(instance.Position)
-		size = tostring(instance.Size)
-	end
-
-	print(string.format(
-		"[RackGenerator][Diagnostic] Name=%s, ClassName=%s, RackId=%s, RackType=%s, StorageCategory=%s, Position=%s, Size=%s, ValidRackZone=%s",
-		instance.Name,
-		instance.ClassName,
-		formatDiagnosticValue(instance:GetAttribute("RackId")),
-		formatDiagnosticValue(instance:GetAttribute("RackType")),
-		formatDiagnosticValue(instance:GetAttribute("StorageCategory")),
-		position,
-		size,
-		tostring(isValidRackZone)
-	))
-end
-
 local function countRackIds(zoneChildren: { Instance }): { [number]: number }
 	local counts: { [number]: number } = {}
 
@@ -72,8 +43,8 @@ local function countRackIds(zoneChildren: { Instance }): { [number]: number }
 	return counts
 end
 
-local function resolveTemplate(rackTemplates: Instance, zone: BasePart, rackType: string): Model?
-	local templateName = "Rack" .. rackType
+local function resolveTemplate(rackTemplates: Instance, zone: BasePart, rackType: string, rackSide: string): Model?
+	local templateName = "Rack" .. rackType .. rackSide
 	local template = rackTemplates:FindFirstChild(templateName)
 
 	if template == nil then
@@ -112,6 +83,12 @@ local function buildRackPlan(
 		return nil
 	end
 	local rackType = rackTypeAttribute :: string
+	local rackSideAttribute = zone:GetAttribute("RackSide")
+	if rackSideAttribute ~= "L" and rackSideAttribute ~= "R" then
+		warnForZone(zone, "RackSide must be the String L or R")
+		return nil
+	end
+	local rackSide = rackSideAttribute :: string
 
 	local storageCategory = zone:GetAttribute("StorageCategory")
 	if typeof(storageCategory) ~= "string" or storageCategory == "" then
@@ -131,7 +108,7 @@ local function buildRackPlan(
 		return nil
 	end
 
-	local template = resolveTemplate(rackTemplates, zone, rackType)
+	local template = resolveTemplate(rackTemplates, zone, rackType, rackSide)
 	if template == nil then
 		return nil
 	end
@@ -219,16 +196,6 @@ local function generateRack(plan: RackPlan, generatedFolder: Folder)
 		local bay = plan.template:Clone()
 		bay.Name = string.format("Bay_%03d", bayIndex)
 
-		local terminalFrame = bay:FindFirstChild("TerminalFrame")
-		if terminalFrame ~= nil then
-			terminalFrame:Destroy()
-		end
-
-		local rackNumberPlate = bay:FindFirstChild("RackNumberPlate")
-		if rackNumberPlate ~= nil then
-			rackNumberPlate:Destroy()
-		end
-
 		bay:PivotTo(bayCFrame)
 		bay.Parent = rackFolder
 		table.insert(bayPivots, bay:GetPivot().Position)
@@ -266,13 +233,11 @@ function RackGenerator.Generate()
 
 	for _, child in zoneChildren do
 		if not child:IsA("BasePart") then
-			printZoneDiagnostic(child, false)
 			warn(string.format("[RackGenerator] Ignoring non-BasePart %s", child:GetFullName()))
 			continue
 		end
 
 		local plan = buildRackPlan(child, rackTemplates, rackIdCounts)
-		printZoneDiagnostic(child, plan ~= nil)
 		if plan ~= nil then
 			table.insert(plans, plan)
 		end
@@ -295,12 +260,6 @@ function RackGenerator.Generate()
 		if succeeded then
 			generatedSectionCount += plan.sectionCount
 			generatedRackCount += 1
-			print(string.format(
-				"[RackGenerator][Diagnostic] Generated Rack_%s from zone %s, sections=%d",
-				tostring(plan.rackId),
-				plan.zone.Name,
-				plan.sectionCount
-			))
 		else
 			local partialRack = generatedFolder:FindFirstChild("Rack_" .. tostring(plan.rackId))
 			if partialRack ~= nil then
@@ -311,7 +270,7 @@ function RackGenerator.Generate()
 	end
 
 	print(string.format(
-		"[RackGenerator] Generated %d Bay sections across %d valid RackZones",
+		"[RackGenerator] Generated %d Bay sections across %d RackZones",
 		generatedSectionCount,
 		generatedRackCount
 	))

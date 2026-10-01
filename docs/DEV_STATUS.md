@@ -1,22 +1,26 @@
 # Warehouse Simulator — Development Status
-Last updated: 2026-09-29
+Last updated: 2026-10-01
 
 ## Completed / prepared
 - Initial warehouse blockout exists in Roblox Studio.
-- `RackV1` template exists.
-- `RackV2` template exists.
+- Authored rack section templates exist: `RackV1L`, `RackV1R`, `RackV2L`, `RackV2R`.
 - Multiple RackZone parts are placed for testing (about 10 zones).
 - Rack storage conventions are defined.
 - Rojo is installed and `rojo serve` works.
 - Partial-Rojo approach is used: code is synchronized; warehouse world geometry remains Studio-authored.
+- Stage 01A rack geometry generation is complete and Studio-tested.
+- RackZone attributes for generation are `RackId`, `RackType`, `RackSide`, and `StorageCategory`.
+- Rack sections are 20 studs long; Bay numbering starts at the RackZone endpoint nearest `Vector3.zero`.
+- The generator clones complete authored L/R prefabs without runtime mirroring or terminal-frame generation.
 
 ## Current milestone
 **Stage 01 — Rack Generator**
 
 Spec: `docs/stages/01-rack-generator.md`
 
+Stage 01A is complete. The next milestone is Stage 01B — Slot/address registry.
+
 ## Not implemented yet
-- Rack generator runtime code.
 - Slot registry.
 - Generated sticker/address text.
 - Product/box systems.
@@ -30,7 +34,7 @@ Spec: `docs/stages/01-rack-generator.md`
 - Persistence/economy/progression.
 
 ## Intended order
-1. 01A Rack geometry generation.
+1. 01A Rack geometry generation. **Complete.**
 2. 01B Slot/address registry.
 3. 01C Labels and RackNumberPlate.
 4. Interaction / carry / place.

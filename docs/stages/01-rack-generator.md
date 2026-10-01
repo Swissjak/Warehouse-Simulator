@@ -16,6 +16,7 @@ Each RackZone is one `BasePart` representing one one-sided rack.
 Required attributes:
 - `RackId` Number
 - `RackType` String: `V1` or `V2`
+- `RackSide` String: `L` or `R`
 - `StorageCategory` String
 
 One zone uses one rack type only.
@@ -25,10 +26,19 @@ Expected path:
 `ServerStorage.RackTemplates`
 
 Templates:
-- `RackV1`
-- `RackV2`
+- `RackV1L`
+- `RackV1R`
+- `RackV2L`
+- `RackV2R`
 
-Each template represents one physical section.
+Each template is a complete authored physical section. The generator selects it from
+`RackType + RackSide`, clones the whole Model, and does not modify its descendants.
+
+Template mapping:
+- `V1 + L` → `RackV1L`
+- `V1 + R` → `RackV1R`
+- `V2 + L` → `RackV2L`
+- `V2 + R` → `RackV2R`
 
 Authoritative section length: **20 studs**.
 
@@ -44,8 +54,7 @@ IDs must be deterministic.
 ## Bay direction
 Bay 1 begins at the end of RackZone closest to `Vector3.zero`.
 
-The generator must not assume world-X or world-Z alignment.
-Determine the dominant horizontal local axis from zone dimensions, calculate both endpoints along the long axis, and choose the endpoint with the smaller world-space distance to origin as the start.
+RackZone `Size.X` and local X define the rack length and axis. Calculate both local-X endpoints with the RackZone CFrame and choose the endpoint with the smaller world-space distance to origin as the start.
 
 Must work for X, Z, 180-degree, and arbitrary horizontal rotations.
 
@@ -59,13 +68,13 @@ Examples:
 - 205 → 10
 - 387 → 19
 
-## RackV1
+## RackV1L / RackV1R
 5 floors.
 3 `PalletSlot` positions per floor.
 `SlotType="Pallet"`
 `MaxHeight=8`
 
-## RackV2
+## RackV2L / RackV2R
 Floors 1–2:
 - 3 normal `Slot` positions;
 - no pallet;
@@ -85,15 +94,16 @@ Barcode may be generic/shared.
 Do not implement OCR/barcode recognition.
 
 ## RackNumberPlate
-Displays RackId for the whole rack.
-Avoid incorrect repeated number plates from cloning one plate per bay.
+Rack-number display is deferred to Stage 01C. Stage 01A does not generate or place RackNumberPlate objects.
 
 # 01A — Geometry Generator
+
+**Status: Complete and Studio-tested.**
 
 Implement only:
 1. Discover RackZones.
 2. Validate required attributes.
-3. Resolve V1/V2 template.
+3. Resolve the authored V1/V2 and L/R template variant.
 4. Determine zone long axis and length.
 5. Determine start endpoint by origin distance.
 6. Compute section count.
@@ -104,19 +114,28 @@ Implement only:
 
 Do NOT implement downstream warehouse systems.
 
+Generated hierarchy:
+```text
+Rack_<RackId>
+├─ Bay_001
+├─ Bay_002
+└─ ...
+```
+
+Each Bay is an unchanged clone of its selected authored prefab. Stage 01A performs no runtime mirroring, auto-flip, TerminalFrame generation, terminal geometry assembly, or per-descendant geometry transforms.
+
 ### Important placement rule
-Do not silently assume an arbitrary template pivot convention.
-
-Before coding placement, inspect/confirm the templates.
-Preferred simple convention:
-- RackV1/RackV2 Model pivot represents a consistent origin/center for one 20-stud section.
-
-If the existing templates do not satisfy a reliable convention, request the smallest Studio change instead of hardcoding fragile offsets.
+Confirmed authored conventions:
+- every prefab Model pivot is the bottom-center of one 20-stud section;
+- template local `+Z` is the section axis;
+- template local `+X` is the front side;
+- one constant `+90°` yaw offset maps the template axes to RackZone local axes;
+- RackZone rotation controls the orientation of the complete cloned prefab.
 
 ### 01A acceptance tests
 With about 10 test RackZones:
 - all valid zones generate;
-- V1 uses RackV1 and V2 uses RackV2;
+- V1/V2 and L/R select the correct one of the four authored prefabs;
 - count matches floor(length/20);
 - sections align with no cumulative drift;
 - rotated zones work;
@@ -176,6 +195,7 @@ Acceptance:
 Warn with useful context for:
 - missing RackId;
 - unsupported RackType;
+- missing or unsupported RackSide;
 - missing template;
 - missing Floor;
 - missing Slot/Sticker;
