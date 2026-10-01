@@ -14,6 +14,9 @@ local RackGenerator = {}
 type RackPlan = {
 	zone: BasePart,
 	rackId: number,
+	rackType: string,
+	rackSide: string,
+	storageCategory: string,
 	template: Model,
 	sectionCount: number,
 	startsAtNegativeEnd: boolean,
@@ -121,6 +124,9 @@ local function buildRackPlan(
 	return {
 		zone = zone,
 		rackId = rackId,
+		rackType = rackType,
+		rackSide = rackSide,
+		storageCategory = storageCategory :: string,
 		template = template,
 		sectionCount = sectionCount,
 		startsAtNegativeEnd = startsAtNegativeEnd,
@@ -182,6 +188,10 @@ end
 local function generateRack(plan: RackPlan, generatedFolder: Folder)
 	local rackFolder = Instance.new("Folder")
 	rackFolder.Name = "Rack_" .. tostring(plan.rackId)
+	rackFolder:SetAttribute("RackId", plan.rackId)
+	rackFolder:SetAttribute("RackType", plan.rackType)
+	rackFolder:SetAttribute("RackSide", plan.rackSide)
+	rackFolder:SetAttribute("StorageCategory", plan.storageCategory)
 	rackFolder.Parent = generatedFolder
 
 	local bayPivots: { Vector3 } = {}
@@ -274,6 +284,8 @@ function RackGenerator.Generate()
 		generatedSectionCount,
 		generatedRackCount
 	))
+
+	return generatedFolder
 end
 
 return RackGenerator
