@@ -18,19 +18,24 @@ Last updated: 2026-10-02
 - Every generated rack receives exactly two idempotent `NumberPlate` clones, sourced from `ServerStorage.RackAssets.NumberPlate`, positioned at the two `RackZone` endpoints and displaying only `RackId`.
 - Stage 04A basic interaction/carry is complete and Studio-tested with the authored `Workspace.Warehouse.TestItems.TestBox`.
 - The client performs center-camera targeting up to 8 studs, ignores the local character, and shows one runtime-only `Highlight` for a valid carryable Model.
-- Pickup and drop use `E`; the client sends only `Pickup(item)` or `Drop()` intent through the runtime `WarehouseShared.Remotes.CarryRequest` RemoteEvent.
+- Pickup uses `E`; carry intent is sent through the runtime `WarehouseShared.Remotes.CarryRequest` RemoteEvent.
 - `CarryService` owns authoritative player/item hold state, validates pickup distance and eligibility, and enforces one held item per player and one holder per item.
 - Held Models resolve their root from `PrimaryPart` or a direct `Body` BasePart, attach through a runtime welded `CarryAnchor`, and restore every BasePart's prior collision/massless state on drop.
 - Carry cleanup releases state when the player dies, the character is removed, the player leaves, or the held item is destroyed.
+- Stage 04B placement preview is complete and Studio-tested.
+- While carrying, the local client hides the real held Model and displays one non-physical client-only placement ghost; other players continue to see the real server-held item.
+- The placement ghost uses a prominent green/red `Highlight`, supports discrete 90-degree rotation with `R`, and accounts for Model pivot/bounding-box offset when resting on a surface.
+- `E` is the primary placement confirmation and `LMB` is an alias; invalid placement sends no request and leaves the item held.
+- `CarryService` independently validates placement distance, upright rotation step, horizontal support, and collidable overlap before placing the real Model and restoring its carry states.
 
 ## Current milestone
-**Stage 04A — Basic Interaction / Carry — Complete and Studio-tested**
+**Stage 04B — Placement Preview — Complete and Studio-tested**
 
-Stages 01A Rack Geometry, 01B Slot Registry, 01C Slot Labels / Rack Numbers, and 04A Basic Interaction / Carry are complete.
+Stages 01A Rack Geometry, 01B Slot Registry, 01C Slot Labels / Rack Numbers, 04A Basic Interaction / Carry, and 04B Placement Preview are complete.
 
 ## Not implemented yet
 - Product/box systems.
-- Placement ghost, rotation, placement confirmation, snapping, and slot placement.
+- Extended placement, identical-item stacking, Slot height validation, snapping, and slot placement.
 - Pallet packing.
 - TSD/scanning.
 - Receiving.
@@ -45,13 +50,14 @@ Stages 01A Rack Geometry, 01B Slot Registry, 01C Slot Labels / Rack Numbers, and
 2. 01B Slot Registry. **Complete.**
 3. 01C Slot Labels / Rack Numbers. **Complete.**
 4. 04A Basic Interaction / Carry. **Complete.**
-5. Interaction placement.
-6. Pallet packing.
-7. TSD/scanning.
-8. Receiving.
-9. ITEM/FAST workflows.
-10. Putaway.
-11. Co-op/persistence.
+5. 04B Placement Preview. **Complete.**
+6. 04C Extended Placement / Identical Item Stacking.
+7. Pallet packing.
+8. TSD/scanning.
+9. Receiving.
+10. ITEM/FAST workflows.
+11. Putaway.
+12. Co-op/persistence.
 
 ## Update rule
 Only mark a milestone complete after successful Roblox Studio testing.

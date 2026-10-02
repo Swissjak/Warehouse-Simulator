@@ -7,6 +7,7 @@ local Workspace = game:GetService("Workspace")
 local WarehouseShared = ReplicatedStorage:WaitForChild("WarehouseShared")
 local CarryConfig = require(WarehouseShared:WaitForChild("CarryConfig"))
 local CarryItem = require(WarehouseShared:WaitForChild("CarryItem"))
+local PlacementGeometry = require(WarehouseShared:WaitForChild("PlacementGeometry"))
 
 local CarryService = {}
 
@@ -21,6 +22,7 @@ type HoldState = {
 	root: BasePart,
 	anchor: BasePart,
 	parts: { PartState },
+	originalPrimaryPart: BasePart?,
 	destroyingConnection: RBXScriptConnection?,
 }
 
@@ -28,7 +30,14 @@ local heldByPlayer: { [Player]: HoldState } = {}
 local holderByItem: { [Model]: Player } = {}
 local deathConnections: { [Player]: RBXScriptConnection } = {}
 local playerConnections: { [Player]: { RBXScriptConnection } } = {}
+local carryRemote: RemoteEvent? = nil
 local started = false
+
+local function notifyHeldChanged(player: Player, item: Model?)
+	if carryRemote ~= nil and player.Parent == Players then
+		carryRemote:FireClient(player, "HeldChanged", item)
+	end
+end
 
 local function getItemLabel(item: Model): string
 	local itemId = item:GetAttribute("ItemId")
@@ -84,6 +93,7 @@ local function clearHeldState(player: Player, itemWasDestroyed: boolean)
 		holderByItem[state.item] = nil
 	end
 	player:SetAttribute(CarryConfig.CarryingAttributeName, false)
+	notifyHeldChanged(player, nil)
 
 	if state.destroyingConnection ~= nil then
 		state.destroyingConnection:Disconnect()
@@ -95,6 +105,13 @@ local function clearHeldState(player: Player, itemWasDestroyed: boolean)
 	end
 
 	if not itemWasDestroyed then
+		if state.item.Parent ~= nil and state.root.Parent ~= nil then
+			local releasePivot = state.item:GetPivot()
+			state.item.PrimaryPart = state.originalPrimaryPart
+			if state.originalPrimaryPart == nil then
+				state.item.WorldPivot = releasePivot
+			end
+		end
 		restorePartStates(state.parts)
 	end
 end
@@ -114,16 +131,10 @@ local function dropHeldItem(player: Player, placeInFront: boolean, shouldLog: bo
 
 	if placeInFront and item.Parent ~= nil and state.root.Parent ~= nil then
 		local character = player.Character
-		local humanoidRootPart = if character ~= nil
-			then character:FindFirstChild("HumanoidRootPart")
-			else nil
+		local humanoidRootPart = if character ~= nil then character:FindFirstChild("HumanoidRootPart") else nil
 
 		if humanoidRootPart ~= nil and humanoidRootPart:IsA("BasePart") then
-			setRootCFrame(
-				item,
-				state.root,
-				humanoidRootPart.CFrame * CFrame.new(0, 0, -CarryConfig.CarryDistance)
-			)
+			setRootCFrame(item, state.root, humanoidRootPart.CFrame * CFrame.new(0, 0, -CarryConfig.CarryDistance))
 		end
 	end
 
@@ -199,6 +210,10 @@ local function pickupItem(player: Player, item: Model)
 	if #parts == 0 then
 		return
 	end
+	local originalPrimaryPart = item.PrimaryPart
+	if item.PrimaryPart == nil then
+		item.PrimaryPart = root
+	end
 
 	local anchor = Instance.new("Part")
 	anchor.Name = "CarryAnchor"
@@ -236,6 +251,7 @@ local function pickupItem(player: Player, item: Model)
 		root = root,
 		anchor = anchor,
 		parts = parts,
+		originalPrimaryPart = originalPrimaryPart,
 		destroyingConnection = nil,
 	}
 	heldByPlayer[player] = state
@@ -245,8 +261,144 @@ local function pickupItem(player: Player, item: Model)
 	state.destroyingConnection = item.Destroying:Connect(function()
 		clearHeldState(player, true)
 	end)
+	notifyHeldChanged(player, item)
 
 	print(string.format("[CarryService] %s picked up %s", player.Name, getItemLabel(item)))
+end
+
+local function hasCollidableOverlap(boundsCFrame: CFrame, boundsSize: Vector3, ignoredInstances: { Instance }): boolean
+	local overlapParams = OverlapParams.new()
+	overlapParams.FilterType = Enum.RaycastFilterType.Exclude
+	overlapParams.FilterDescendantsInstances = ignoredInstances
+	overlapParams.MaxParts = 0
+
+	local parts = Workspace:GetPartBoundsInBox(boundsCFrame, PlacementGeometry.GetShrunkSize(boundsSize), overlapParams)
+	for _, part in parts do
+		if part.CanCollide then
+			return true
+		end
+	end
+
+	return false
+end
+
+local function orientationMatchesRotationStep(requestedCFrame: CFrame, rotationStep: number): boolean
+	local expectedRotation = PlacementGeometry.GetYawRotation(rotationStep)
+	local minimumDot = CarryConfig.PlacementOrientationDotTolerance
+
+	return requestedCFrame.RightVector:Dot(expectedRotation.RightVector) >= minimumDot
+		and requestedCFrame.UpVector:Dot(expectedRotation.UpVector) >= minimumDot
+		and requestedCFrame.LookVector:Dot(expectedRotation.LookVector) >= minimumDot
+end
+
+local function validatePlacement(player: Player, requestedCFrame: CFrame, rotationStep: number): CFrame?
+	local state = heldByPlayer[player]
+	if state == nil then
+		return nil
+	end
+
+	local character = player.Character
+	if character == nil then
+		return nil
+	end
+	local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+	if humanoidRootPart == nil or not humanoidRootPart:IsA("BasePart") then
+		return nil
+	end
+
+	if state.item.Parent == nil or not state.item:IsDescendantOf(Workspace) or state.root.Parent == nil then
+		return nil
+	end
+	if
+		not PlacementGeometry.IsFiniteVector3(requestedCFrame.Position)
+		or not PlacementGeometry.IsFiniteVector3(requestedCFrame.RightVector)
+		or not PlacementGeometry.IsFiniteVector3(requestedCFrame.UpVector)
+		or not PlacementGeometry.IsFiniteVector3(requestedCFrame.LookVector)
+	then
+		return nil
+	end
+	if not orientationMatchesRotationStep(requestedCFrame, rotationStep) then
+		return nil
+	end
+
+	local maximumDistance = CarryConfig.InteractionDistance + CarryConfig.ServerDistanceTolerance
+	if (humanoidRootPart.Position - requestedCFrame.Position).Magnitude > maximumDistance then
+		return nil
+	end
+
+	local boundsInfo = PlacementGeometry.GetBoundsInfo(state.item)
+	local candidateCFrame = CFrame.new(requestedCFrame.Position) * PlacementGeometry.GetYawRotation(rotationStep)
+	local boundsCFrame, boundsSize = PlacementGeometry.GetWorldBounds(candidateCFrame, boundsInfo)
+	local candidateBottomY = PlacementGeometry.GetBoundsBottomY(boundsCFrame, boundsSize)
+
+	local raycastParams = RaycastParams.new()
+	raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+	raycastParams.FilterDescendantsInstances = { character, state.item }
+	raycastParams.IgnoreWater = true
+
+	local probeOrigin = Vector3.new(
+		boundsCFrame.Position.X,
+		candidateBottomY + CarryConfig.PlacementSurfaceProbeAbove,
+		boundsCFrame.Position.Z
+	)
+	local probeDistance = CarryConfig.PlacementSurfaceProbeAbove + CarryConfig.PlacementSurfaceProbeBelow
+	local surfaceResult = Workspace:Raycast(probeOrigin, Vector3.new(0, -probeDistance, 0), raycastParams)
+	if
+		surfaceResult == nil
+		or not surfaceResult.Instance.CanCollide
+		or surfaceResult.Normal.Y < CarryConfig.PlacementSurfaceNormalMinY
+		or CarryItem.FindCarryableModel(surfaceResult.Instance) ~= nil
+	then
+		return nil
+	end
+	if math.abs(surfaceResult.Position.Y - candidateBottomY) > CarryConfig.PlacementSurfaceHeightTolerance then
+		return nil
+	end
+
+	local validatedCFrame = PlacementGeometry.CreateCandidateCFrame(
+		Vector3.new(requestedCFrame.Position.X, surfaceResult.Position.Y, requestedCFrame.Position.Z),
+		rotationStep,
+		boundsInfo
+	)
+	if (humanoidRootPart.Position - validatedCFrame.Position).Magnitude > maximumDistance then
+		return nil
+	end
+
+	local validatedBoundsCFrame, validatedBoundsSize = PlacementGeometry.GetWorldBounds(validatedCFrame, boundsInfo)
+	if hasCollidableOverlap(validatedBoundsCFrame, validatedBoundsSize, { character, state.item }) then
+		return nil
+	end
+
+	return validatedCFrame
+end
+
+local function placeHeldItem(player: Player, requestedCFrameValue: unknown, rotationStepValue: unknown)
+	if typeof(requestedCFrameValue) ~= "CFrame" or not PlacementGeometry.IsRotationStep(rotationStepValue) then
+		return
+	end
+
+	local requestedCFrame = requestedCFrameValue :: CFrame
+	local rotationStep = rotationStepValue :: number
+	local validatedCFrame = validatePlacement(player, requestedCFrame, rotationStep)
+	if validatedCFrame == nil then
+		return
+	end
+
+	local state = heldByPlayer[player]
+	if state == nil then
+		return
+	end
+	local itemLabel = getItemLabel(state.item)
+
+	if state.anchor.Parent ~= nil then
+		state.anchor:Destroy()
+	end
+	state.item:PivotTo(validatedCFrame)
+	state.root.AssemblyLinearVelocity = Vector3.zero
+	state.root.AssemblyAngularVelocity = Vector3.zero
+	clearHeldState(player, false)
+
+	print(string.format("[CarryService] %s placed %s", player.Name, itemLabel))
 end
 
 local function getOrCreateRemoteEvent(): RemoteEvent
@@ -329,9 +481,14 @@ function CarryService.Start()
 	started = true
 
 	local remote = getOrCreateRemoteEvent()
-	remote.OnServerEvent:Connect(function(player: Player, action: unknown, itemValue: unknown)
+	carryRemote = remote
+	remote.OnServerEvent:Connect(function(player: Player, action: unknown, itemValue: unknown, extraValue: unknown)
 		if action == "Drop" then
 			dropHeldItem(player, true, true)
+			return
+		end
+		if action == "Place" then
+			placeHeldItem(player, itemValue, extraValue)
 			return
 		end
 

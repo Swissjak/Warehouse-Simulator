@@ -10,10 +10,13 @@ local player = Players.LocalPlayer
 local WarehouseShared = ReplicatedStorage:WaitForChild("WarehouseShared")
 local CarryConfig = require(WarehouseShared:WaitForChild("CarryConfig"))
 local CarryItem = require(WarehouseShared:WaitForChild("CarryItem"))
+local PlacementController = require(script.Parent.PlacementController)
 
 local InteractionController = {}
 
 local ACTION_NAME = "WarehouseCarryInteraction"
+local ROTATE_ACTION_NAME = "WarehousePlacementRotate"
+local PLACE_ACTION_NAME = "WarehousePlacementConfirm"
 local started = false
 local currentTarget: Model? = nil
 local lastRequestTime = 0
@@ -60,11 +63,7 @@ local function findTarget(): Model?
 
 	local viewportCenter = camera.ViewportSize / 2
 	local ray = camera:ViewportPointToRay(viewportCenter.X, viewportCenter.Y)
-	local result = Workspace:Raycast(
-		ray.Origin,
-		ray.Direction * CarryConfig.InteractionDistance,
-		raycastParams
-	)
+	local result = Workspace:Raycast(ray.Origin, ray.Direction * CarryConfig.InteractionDistance, raycastParams)
 	if result == nil then
 		return nil
 	end
@@ -91,19 +90,49 @@ local function onInteraction(
 		return Enum.ContextActionResult.Sink
 	end
 	lastRequestTime = now
+	if player:GetAttribute(CarryConfig.CarryingAttributeName) == true then
+		PlacementController.TryPlace()
+		return Enum.ContextActionResult.Sink
+	end
 
 	local remotes = WarehouseShared:FindFirstChild(CarryConfig.RemotesFolderName)
-	local remote = if remotes ~= nil
-		then remotes:FindFirstChild(CarryConfig.RemoteEventName)
-		else nil
+	local remote = if remotes ~= nil then remotes:FindFirstChild(CarryConfig.RemoteEventName) else nil
 	if remote == nil or not remote:IsA("RemoteEvent") then
 		return Enum.ContextActionResult.Sink
 	end
 
-	if player:GetAttribute(CarryConfig.CarryingAttributeName) == true then
-		remote:FireServer("Drop")
-	elseif currentTarget ~= nil then
+	if currentTarget ~= nil then
 		remote:FireServer("Pickup", currentTarget)
+	end
+
+	return Enum.ContextActionResult.Sink
+end
+
+local function onRotate(
+	_actionName: string,
+	inputState: Enum.UserInputState,
+	_inputObject: InputObject
+): Enum.ContextActionResult
+	if player:GetAttribute(CarryConfig.CarryingAttributeName) ~= true then
+		return Enum.ContextActionResult.Pass
+	end
+	if inputState == Enum.UserInputState.Begin then
+		PlacementController.Rotate()
+	end
+
+	return Enum.ContextActionResult.Sink
+end
+
+local function onPlace(
+	_actionName: string,
+	inputState: Enum.UserInputState,
+	_inputObject: InputObject
+): Enum.ContextActionResult
+	if player:GetAttribute(CarryConfig.CarryingAttributeName) ~= true then
+		return Enum.ContextActionResult.Pass
+	end
+	if inputState == Enum.UserInputState.Begin then
+		PlacementController.TryPlace()
 	end
 
 	return Enum.ContextActionResult.Sink
@@ -122,6 +151,8 @@ function InteractionController.Start()
 	end)
 
 	ContextActionService:BindAction(ACTION_NAME, onInteraction, false, Enum.KeyCode.E)
+	ContextActionService:BindAction(ROTATE_ACTION_NAME, onRotate, false, Enum.KeyCode.R)
+	ContextActionService:BindAction(PLACE_ACTION_NAME, onPlace, false, Enum.UserInputType.MouseButton1)
 end
 
 return InteractionController
