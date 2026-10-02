@@ -51,6 +51,29 @@ local function getItemLabel(item: Model): string
 	return item.Name
 end
 
+local function clearPackedPalletAssociation(item: Model)
+	item:SetAttribute("PackedOnPallet", nil)
+	item:SetAttribute("PalletId", nil)
+
+	local association = item:FindFirstChild(CarryConfig.PackedPalletObjectName)
+	if association ~= nil then
+		association:Destroy()
+	end
+end
+
+local function setPackedPalletAssociation(item: Model, pallet: Model)
+	clearPackedPalletAssociation(item)
+
+	local association = Instance.new("ObjectValue")
+	association.Name = CarryConfig.PackedPalletObjectName
+	association.Value = pallet
+	association.Parent = item
+
+	item:SetAttribute("PackedOnPallet", true)
+	local palletId = pallet:GetAttribute("ItemId")
+	item:SetAttribute("PalletId", if typeof(palletId) == "string" and palletId ~= "" then palletId else nil)
+end
+
 local function setRootCFrame(item: Model, root: BasePart, targetCFrame: CFrame)
 	local rootToPivot = root.CFrame:ToObjectSpace(item:GetPivot())
 	item:PivotTo(targetCFrame * rootToPivot)
@@ -213,6 +236,7 @@ local function pickupItem(player: Player, item: Model)
 	if #parts == 0 then
 		return
 	end
+	clearPackedPalletAssociation(item)
 	local originalPrimaryPart = item.PrimaryPart
 	if item.PrimaryPart == nil then
 		item.PrimaryPart = root
@@ -400,6 +424,84 @@ local function validatePalletPlacement(
 	return candidateCFrame, palletInfo.model
 end
 
+local function validatePalletStackPlacement(
+	player: Player,
+	palletValue: unknown,
+	supportValue: unknown,
+	rotationStepValue: unknown
+): (CFrame?, Model?)
+	if
+		typeof(palletValue) ~= "Instance"
+		or not palletValue:IsA("Model")
+		or typeof(supportValue) ~= "Instance"
+		or not supportValue:IsA("Model")
+		or not PlacementGeometry.IsRotationStep(rotationStepValue)
+	then
+		return nil, nil
+	end
+
+	local state = heldByPlayer[player]
+	local character = player.Character
+	if state == nil or character == nil or supportValue == state.item then
+		return nil, nil
+	end
+	local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+	if humanoidRootPart == nil or not humanoidRootPart:IsA("BasePart") then
+		return nil, nil
+	end
+	if state.item.Parent == nil or not state.item:IsDescendantOf(Workspace) or state.root.Parent == nil then
+		return nil, nil
+	end
+	if supportValue.Parent == nil or not supportValue:IsDescendantOf(Workspace) then
+		return nil, nil
+	end
+
+	local palletInfo = PalletPlacementRules.GetPalletInfo(palletValue)
+	local associatedPalletInfo = PalletPlacementRules.GetAssociatedPalletInfo(supportValue)
+	if
+		palletInfo == nil
+		or associatedPalletInfo == nil
+		or associatedPalletInfo.model ~= palletInfo.model
+		or not PlacementRules.HaveMatchingItemIds(state.item, supportValue)
+	then
+		return nil, nil
+	end
+
+	local rotationStep = rotationStepValue :: number
+	local boundsInfo = PlacementGeometry.GetBoundsInfo(state.item)
+	local candidateCFrame = PalletPlacementRules.CreateVerticalCandidateCFrame(
+		palletInfo,
+		supportValue,
+		rotationStep,
+		boundsInfo
+	)
+	local maximumDistance = CarryConfig.PlacementDistance + CarryConfig.ServerDistanceTolerance
+	if (humanoidRootPart.Position - candidateCFrame.Position).Magnitude > maximumDistance then
+		return nil, nil
+	end
+
+	local supportBoundsCFrame, supportBoundsSize = supportValue:GetBoundingBox()
+	local candidateBoundsCFrame, candidateBoundsSize = PlacementGeometry.GetWorldBounds(candidateCFrame, boundsInfo)
+	if
+		not PalletPlacementRules.DoesFootprintFitSupport(
+			supportBoundsCFrame,
+			supportBoundsSize,
+			candidateBoundsCFrame,
+			candidateBoundsSize
+		)
+		or not PalletPlacementRules.IsHeightValid(palletInfo, candidateBoundsCFrame, candidateBoundsSize)
+	then
+		return nil, nil
+	end
+
+	local ignoredInstances: { Instance } = { character, state.item, supportValue }
+	if PalletPlacementRules.HasForbiddenOverlap(candidateBoundsCFrame, candidateBoundsSize, ignoredInstances) then
+		return nil, nil
+	end
+
+	return candidateCFrame, palletInfo.model
+end
+
 local function validatePlacement(
 	player: Player,
 	requestedCFrame: CFrame,
@@ -491,6 +593,10 @@ local function validatePlacement(
 
 	local stackSupport = CarryItem.FindCarryableModel(surfaceResult.Instance)
 	if stackSupport ~= nil then
+		if PalletPlacementRules.GetAssociatedPalletInfo(stackSupport) ~= nil then
+			return nil, nil
+		end
+
 		local palletProbeIgnoredInstances: { Instance } = { character, state.item, stackSupport }
 		if
 			PalletPlacementRules.FindPalletBelowPosition(
@@ -570,12 +676,9 @@ local function finishPlacement(player: Player, validatedCFrame: CFrame, pallet: 
 	end
 	state.item:PivotTo(validatedCFrame)
 	if pallet ~= nil then
-		state.item:SetAttribute("PackedOnPallet", true)
-		local palletId = pallet:GetAttribute("ItemId")
-		state.item:SetAttribute("PalletId", if typeof(palletId) == "string" and palletId ~= "" then palletId else nil)
+		setPackedPalletAssociation(state.item, pallet)
 	else
-		state.item:SetAttribute("PackedOnPallet", nil)
-		state.item:SetAttribute("PalletId", nil)
+		clearPackedPalletAssociation(state.item)
 	end
 	state.root.AssemblyLinearVelocity = Vector3.zero
 	state.root.AssemblyAngularVelocity = Vector3.zero
@@ -611,6 +714,25 @@ local function placeHeldItemOnPallet(
 		palletValue,
 		xIndexValue,
 		zIndexValue,
+		rotationStepValue
+	)
+	if validatedCFrame == nil or pallet == nil then
+		return
+	end
+
+	finishPlacement(player, validatedCFrame, pallet)
+end
+
+local function placeHeldItemOnPalletStack(
+	player: Player,
+	palletValue: unknown,
+	supportValue: unknown,
+	rotationStepValue: unknown
+)
+	local validatedCFrame, pallet = validatePalletStackPlacement(
+		player,
+		palletValue,
+		supportValue,
 		rotationStepValue
 	)
 	if validatedCFrame == nil or pallet == nil then
@@ -719,6 +841,10 @@ function CarryService.Start()
 		end
 		if action == "PlacePallet" then
 			placeHeldItemOnPallet(player, itemValue, extraValue, targetValue, rotationValue)
+			return
+		end
+		if action == "PlacePalletStack" then
+			placeHeldItemOnPalletStack(player, itemValue, extraValue, targetValue)
 			return
 		end
 

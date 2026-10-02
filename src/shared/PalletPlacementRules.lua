@@ -79,6 +79,30 @@ function PalletPlacementRules.FindPalletInfo(instance: Instance?): PalletInfo?
 	return nil
 end
 
+function PalletPlacementRules.GetAssociatedPalletInfo(item: Model): PalletInfo?
+	if item.Parent == nil or not item:IsDescendantOf(Workspace) then
+		return nil
+	end
+	if item:GetAttribute("Carryable") ~= true then
+		return nil
+	end
+	if item:GetAttribute("PackedOnPallet") ~= true then
+		return nil
+	end
+
+	local association = item:FindFirstChild(CarryConfig.PackedPalletObjectName)
+	if association == nil or not association:IsA("ObjectValue") then
+		return nil
+	end
+
+	local pallet = association.Value
+	if pallet == nil or not pallet:IsA("Model") then
+		return nil
+	end
+
+	return PalletPlacementRules.GetPalletInfo(pallet)
+end
+
 function PalletPlacementRules.FindPalletBelowPosition(
 	worldPosition: Vector3,
 	ignoredInstances: { Instance }
@@ -121,6 +145,27 @@ function PalletPlacementRules.CreateCandidateCFrame(
 		planePosition.X - boundsOffset.X,
 		planePosition.Y - bottomAtOrigin,
 		planePosition.Z - boundsOffset.Z
+	)
+
+	return CFrame.new(pivotPosition) * orientation
+end
+
+function PalletPlacementRules.CreateVerticalCandidateCFrame(
+	palletInfo: PalletInfo,
+	support: Model,
+	rotationStep: number,
+	boundsInfo: PlacementGeometry.BoundsInfo
+): CFrame
+	local supportBoundsCFrame, supportBoundsSize = support:GetBoundingBox()
+	local supportTopY = PlacementGeometry.GetBoundsTopY(supportBoundsCFrame, supportBoundsSize)
+	local orientation = PalletPlacementRules.GetCandidateOrientation(palletInfo.loadArea, rotationStep)
+	local boundsAtOrigin = orientation * boundsInfo.pivotToBounds
+	local bottomAtOrigin = PlacementGeometry.GetBoundsBottomY(boundsAtOrigin, boundsInfo.size)
+	local boundsOffset = boundsAtOrigin.Position
+	local pivotPosition = Vector3.new(
+		supportBoundsCFrame.Position.X - boundsOffset.X,
+		supportTopY - bottomAtOrigin,
+		supportBoundsCFrame.Position.Z - boundsOffset.Z
 	)
 
 	return CFrame.new(pivotPosition) * orientation
@@ -175,6 +220,39 @@ function PalletPlacementRules.DoesFootprintFit(
 		and maximumX <= halfArea.X + tolerance
 		and minimumZ >= -halfArea.Z - tolerance
 		and maximumZ <= halfArea.Z + tolerance
+end
+
+function PalletPlacementRules.DoesFootprintFitSupport(
+	supportBoundsCFrame: CFrame,
+	supportBoundsSize: Vector3,
+	candidateBoundsCFrame: CFrame,
+	candidateBoundsSize: Vector3
+): boolean
+	local halfSupport = supportBoundsSize / 2
+	local halfCandidate = candidateBoundsSize / 2
+	local tolerance = CarryConfig.PalletFootprintTolerance
+
+	for xSign = -1, 1, 2 do
+		for ySign = -1, 1, 2 do
+			for zSign = -1, 1, 2 do
+				local candidateCorner = Vector3.new(
+					halfCandidate.X * xSign,
+					halfCandidate.Y * ySign,
+					halfCandidate.Z * zSign
+				)
+				local worldCorner = candidateBoundsCFrame:PointToWorldSpace(candidateCorner)
+				local supportLocalCorner = supportBoundsCFrame:PointToObjectSpace(worldCorner)
+				if
+					math.abs(supportLocalCorner.X) > halfSupport.X + tolerance
+					or math.abs(supportLocalCorner.Z) > halfSupport.Z + tolerance
+				then
+					return false
+				end
+			end
+		end
+	end
+
+	return true
 end
 
 function PalletPlacementRules.BuildGrid(

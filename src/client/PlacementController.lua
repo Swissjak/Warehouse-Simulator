@@ -40,6 +40,7 @@ local displayedValidity: boolean? = nil
 local boundsInfo: PlacementGeometry.BoundsInfo? = nil
 local candidateCFrame: CFrame? = nil
 local candidatePallet: Model? = nil
+local candidateSupport: Model? = nil
 local candidateCellX: number? = nil
 local candidateCellZ: number? = nil
 local candidateIsValid = false
@@ -98,6 +99,7 @@ local function destroyGhost()
 	boundsInfo = nil
 	candidateCFrame = nil
 	candidatePallet = nil
+	candidateSupport = nil
 	candidateCellX = nil
 	candidateCellZ = nil
 	candidateIsValid = false
@@ -134,6 +136,7 @@ local function shouldRemoveFromGhost(instance: Instance): boolean
 		or instance:IsA("Constraint")
 		or instance:IsA("JointInstance")
 		or instance:IsA("WeldConstraint")
+		or (instance:IsA("ObjectValue") and instance.Name == CarryConfig.PackedPalletObjectName)
 		or RUNTIME_CARRY_NAMES[instance.Name] == true
 end
 
@@ -371,6 +374,51 @@ local function selectPalletCandidate(
 	return fallbackCFrame, nil, false
 end
 
+local function createVerticalCandidate(
+	palletInfo: PalletPlacementRules.PalletInfo,
+	support: Model,
+	currentItem: Model,
+	currentBoundsInfo: PlacementGeometry.BoundsInfo,
+	ignoredInstances: { Instance },
+	humanoidRootPart: BasePart?
+): (CFrame, boolean)
+	local verticalCFrame = PalletPlacementRules.CreateVerticalCandidateCFrame(
+		palletInfo,
+		support,
+		rotationStep,
+		currentBoundsInfo
+	)
+	local supportBoundsCFrame, supportBoundsSize = support:GetBoundingBox()
+	local candidateBoundsCFrame, candidateBoundsSize = PlacementGeometry.GetWorldBounds(
+		verticalCFrame,
+		currentBoundsInfo
+	)
+	local itemIdsMatch = PlacementRules.HaveMatchingItemIds(currentItem, support)
+	local footprintIsValid = PalletPlacementRules.DoesFootprintFitSupport(
+		supportBoundsCFrame,
+		supportBoundsSize,
+		candidateBoundsCFrame,
+		candidateBoundsSize
+	)
+	local heightIsValid = PalletPlacementRules.IsHeightValid(
+		palletInfo,
+		candidateBoundsCFrame,
+		candidateBoundsSize
+	)
+	local distanceIsValid = humanoidRootPart ~= nil
+		and (humanoidRootPart.Position - verticalCFrame.Position).Magnitude <= CarryConfig.PlacementDistance
+	local overlapIgnoredInstances = table.clone(ignoredInstances)
+	table.insert(overlapIgnoredInstances, support)
+	local overlapIsValid = not PalletPlacementRules.HasForbiddenOverlap(
+		candidateBoundsCFrame,
+		candidateBoundsSize,
+		overlapIgnoredInstances
+	)
+
+	return verticalCFrame,
+		itemIdsMatch and footprintIsValid and heightIsValid and distanceIsValid and overlapIsValid
+end
+
 local function updateCandidate()
 	local currentGhost = ghost
 	local currentItem = heldItem
@@ -379,6 +427,7 @@ local function updateCandidate()
 	if currentGhost == nil or currentItem == nil or currentBoundsInfo == nil or camera == nil then
 		candidateCFrame = nil
 		candidatePallet = nil
+		candidateSupport = nil
 		candidateCellX = nil
 		candidateCellZ = nil
 		candidateIsValid = false
@@ -399,11 +448,35 @@ local function updateCandidate()
 	local viewportCenter = camera.ViewportSize / 2
 	local ray = camera:ViewportPointToRay(viewportCenter.X, viewportCenter.Y)
 	local result = Workspace:Raycast(ray.Origin, ray.Direction * CarryConfig.PlacementRayDistance, raycastParams)
-	local palletInfo = findPalletTarget(result, ignoredInstances)
+	local raycastSupport = if result ~= nil then CarryItem.FindCarryableModel(result.Instance) else nil
+	local supportPalletInfo = if raycastSupport ~= nil
+		then PalletPlacementRules.GetAssociatedPalletInfo(raycastSupport)
+		else nil
 	local humanoidRootPartValue = if character ~= nil then character:FindFirstChild("HumanoidRootPart") else nil
 	local humanoidRootPart = if humanoidRootPartValue ~= nil and humanoidRootPartValue:IsA("BasePart")
 		then humanoidRootPartValue
 		else nil
+	if supportPalletInfo ~= nil and raycastSupport ~= nil then
+		local verticalCFrame, isValid = createVerticalCandidate(
+			supportPalletInfo,
+			raycastSupport,
+			currentItem,
+			currentBoundsInfo,
+			ignoredInstances,
+			humanoidRootPart
+		)
+		currentGhost:PivotTo(verticalCFrame)
+		candidateCFrame = verticalCFrame
+		candidatePallet = supportPalletInfo.model
+		candidateSupport = raycastSupport
+		candidateCellX = nil
+		candidateCellZ = nil
+		candidateIsValid = isValid
+		setGhostColor(candidateIsValid)
+		return
+	end
+
+	local palletInfo = findPalletTarget(result, ignoredInstances)
 	if palletInfo ~= nil and result ~= nil then
 		local palletCandidateCFrame, selectedCell, isValid = selectPalletCandidate(
 			palletInfo,
@@ -415,6 +488,7 @@ local function updateCandidate()
 		currentGhost:PivotTo(palletCandidateCFrame)
 		candidateCFrame = palletCandidateCFrame
 		candidatePallet = palletInfo.model
+		candidateSupport = nil
 		candidateCellX = if selectedCell ~= nil then selectedCell.xIndex else nil
 		candidateCellZ = if selectedCell ~= nil then selectedCell.zIndex else nil
 		candidateIsValid = isValid
@@ -422,7 +496,6 @@ local function updateCandidate()
 		return
 	end
 
-	local raycastSupport = if result ~= nil then CarryItem.FindCarryableModel(result.Instance) else nil
 	local stackSupport = if raycastSupport ~= nil
 			and PlacementRules.HaveMatchingItemIds(currentItem, raycastSupport)
 		then raycastSupport
@@ -436,6 +509,7 @@ local function updateCandidate()
 	currentGhost:PivotTo(newCandidateCFrame)
 	candidateCFrame = newCandidateCFrame
 	candidatePallet = nil
+	candidateSupport = nil
 	candidateCellX = nil
 	candidateCellZ = nil
 
@@ -497,7 +571,9 @@ function PlacementController.TryPlace()
 	end
 	lastPlaceRequestTime = now
 
-	if candidatePallet ~= nil then
+	if candidatePallet ~= nil and candidateSupport ~= nil then
+		carryRemote:FireServer("PlacePalletStack", candidatePallet, candidateSupport, rotationStep)
+	elseif candidatePallet ~= nil then
 		if candidateCellX == nil or candidateCellZ == nil then
 			return
 		end

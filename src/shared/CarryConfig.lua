@@ -24,6 +24,7 @@ local CarryConfig = {
 	PalletFootprintTolerance = 0.05,
 	PalletPackingGap = 0.05,
 	PalletCargoProbeDistance = 10,
+	PackedPalletObjectName = "PackedPallet",
 	PlacementPositionTolerance = 0.2,
 	GhostTransparency = 0.65,
 	RemotesFolderName = "Remotes",
