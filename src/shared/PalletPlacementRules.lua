@@ -16,6 +16,21 @@ export type PalletInfo = {
 	maxHeight: number,
 }
 
+export type GridCell = {
+	xIndex: number,
+	zIndex: number,
+	localX: number,
+	localZ: number,
+}
+
+export type GridInfo = {
+	countX: number,
+	countZ: number,
+	footprintX: number,
+	footprintZ: number,
+	cells: { GridCell },
+}
+
 local function isPositiveFiniteNumber(value: unknown): boolean
 	return typeof(value) == "number"
 		and value == value
@@ -64,6 +79,28 @@ function PalletPlacementRules.FindPalletInfo(instance: Instance?): PalletInfo?
 	return nil
 end
 
+function PalletPlacementRules.FindPalletBelowPosition(
+	worldPosition: Vector3,
+	ignoredInstances: { Instance }
+): PalletInfo?
+	local raycastParams = RaycastParams.new()
+	raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+	raycastParams.FilterDescendantsInstances = ignoredInstances
+	raycastParams.IgnoreWater = true
+
+	local probeOffset = CarryConfig.PalletFootprintTolerance
+	local result = Workspace:Raycast(
+		worldPosition + Vector3.new(0, probeOffset, 0),
+		Vector3.new(0, -CarryConfig.PalletCargoProbeDistance, 0),
+		raycastParams
+	)
+	if result == nil then
+		return nil
+	end
+
+	return PalletPlacementRules.FindPalletInfo(result.Instance)
+end
+
 function PalletPlacementRules.GetCandidateOrientation(loadArea: BasePart, rotationStep: number): CFrame
 	return loadArea.CFrame.Rotation * PlacementGeometry.GetYawRotation(rotationStep)
 end
@@ -71,13 +108,15 @@ end
 function PalletPlacementRules.CreateCandidateCFrame(
 	loadArea: BasePart,
 	rotationStep: number,
-	boundsInfo: PlacementGeometry.BoundsInfo
+	boundsInfo: PlacementGeometry.BoundsInfo,
+	localX: number,
+	localZ: number
 ): CFrame
 	local orientation = PalletPlacementRules.GetCandidateOrientation(loadArea, rotationStep)
 	local boundsAtOrigin = orientation * boundsInfo.pivotToBounds
 	local bottomAtOrigin = PlacementGeometry.GetBoundsBottomY(boundsAtOrigin, boundsInfo.size)
 	local boundsOffset = boundsAtOrigin.Position
-	local planePosition = loadArea.Position
+	local planePosition = loadArea.CFrame:PointToWorldSpace(Vector3.new(localX, 0, localZ))
 	local pivotPosition = Vector3.new(
 		planePosition.X - boundsOffset.X,
 		planePosition.Y - bottomAtOrigin,
@@ -87,11 +126,11 @@ function PalletPlacementRules.CreateCandidateCFrame(
 	return CFrame.new(pivotPosition) * orientation
 end
 
-function PalletPlacementRules.DoesFootprintFit(
+local function getFootprintExtents(
 	loadArea: BasePart,
 	boundsCFrame: CFrame,
 	boundsSize: Vector3
-): boolean
+): (number, number, number, number)
 	local halfBounds = boundsSize / 2
 	local minimumX = math.huge
 	local maximumX = -math.huge
@@ -116,12 +155,95 @@ function PalletPlacementRules.DoesFootprintFit(
 		end
 	end
 
+	return minimumX, maximumX, minimumZ, maximumZ
+end
+
+function PalletPlacementRules.DoesFootprintFit(
+	loadArea: BasePart,
+	boundsCFrame: CFrame,
+	boundsSize: Vector3
+): boolean
+	local minimumX, maximumX, minimumZ, maximumZ = getFootprintExtents(
+		loadArea,
+		boundsCFrame,
+		boundsSize
+	)
+
 	local halfArea = loadArea.Size / 2
 	local tolerance = CarryConfig.PalletFootprintTolerance
 	return minimumX >= -halfArea.X - tolerance
 		and maximumX <= halfArea.X + tolerance
 		and minimumZ >= -halfArea.Z - tolerance
 		and maximumZ <= halfArea.Z + tolerance
+end
+
+function PalletPlacementRules.BuildGrid(
+	loadArea: BasePart,
+	rotationStep: number,
+	boundsInfo: PlacementGeometry.BoundsInfo
+): GridInfo
+	local centeredCFrame = PalletPlacementRules.CreateCandidateCFrame(
+		loadArea,
+		rotationStep,
+		boundsInfo,
+		0,
+		0
+	)
+	local centeredBoundsCFrame, centeredBoundsSize = PlacementGeometry.GetWorldBounds(centeredCFrame, boundsInfo)
+	local minimumX, maximumX, minimumZ, maximumZ = getFootprintExtents(
+		loadArea,
+		centeredBoundsCFrame,
+		centeredBoundsSize
+	)
+	local footprintX = maximumX - minimumX
+	local footprintZ = maximumZ - minimumZ
+	local gap = CarryConfig.PalletPackingGap
+	local countX = math.max(math.floor((loadArea.Size.X + gap) / (footprintX + gap)), 0)
+	local countZ = math.max(math.floor((loadArea.Size.Z + gap) / (footprintZ + gap)), 0)
+	local cells: { GridCell } = {}
+
+	if countX > 0 and countZ > 0 then
+		local usedX = countX * footprintX + (countX - 1) * gap
+		local usedZ = countZ * footprintZ + (countZ - 1) * gap
+		local startX = -usedX / 2 + footprintX / 2
+		local startZ = -usedZ / 2 + footprintZ / 2
+
+		for zIndex = 1, countZ do
+			for xIndex = 1, countX do
+				table.insert(cells, {
+					xIndex = xIndex,
+					zIndex = zIndex,
+					localX = startX + (xIndex - 1) * (footprintX + gap),
+					localZ = startZ + (zIndex - 1) * (footprintZ + gap),
+				})
+			end
+		end
+	end
+
+	return {
+		countX = countX,
+		countZ = countZ,
+		footprintX = footprintX,
+		footprintZ = footprintZ,
+		cells = cells,
+	}
+end
+
+function PalletPlacementRules.IsGridIndex(value: unknown): boolean
+	return typeof(value) == "number"
+		and value == value
+		and math.abs(value) < math.huge
+		and value % 1 == 0
+		and value >= 1
+end
+
+function PalletPlacementRules.GetGridCell(gridInfo: GridInfo, xIndex: number, zIndex: number): GridCell?
+	if xIndex > gridInfo.countX or zIndex > gridInfo.countZ then
+		return nil
+	end
+
+	local linearIndex = (zIndex - 1) * gridInfo.countX + xIndex
+	return gridInfo.cells[linearIndex]
 end
 
 function PalletPlacementRules.GetPalletBottomY(pallet: Model): number
@@ -141,42 +263,25 @@ function PalletPlacementRules.IsHeightValid(
 	return totalLoadedHeight <= palletInfo.maxHeight + CarryConfig.StackHeightTolerance
 end
 
-function PalletPlacementRules.IsEmpty(palletInfo: PalletInfo, ignoredInstances: { Instance }): boolean
-	local palletBottomY = PalletPlacementRules.GetPalletBottomY(palletInfo.model)
-	local maximumTopY = palletBottomY + palletInfo.maxHeight
-	local packingPlaneY = palletInfo.loadArea.Position.Y
-	local availableHeight = maximumTopY - packingPlaneY
-	if availableHeight <= 0 then
-		return true
-	end
-
-	local inset = math.min(CarryConfig.PalletEmptyQueryInset, availableHeight / 4)
-	local queryHeight = math.max(availableHeight - inset * 2, 0.01)
-	local queryCenterY = packingPlaneY + inset + queryHeight / 2
-	local queryCFrame = CFrame.new(
-		palletInfo.loadArea.Position.X,
-		queryCenterY,
-		palletInfo.loadArea.Position.Z
-	) * palletInfo.loadArea.CFrame.Rotation
-	local querySize = Vector3.new(
-		palletInfo.loadArea.Size.X,
-		queryHeight,
-		palletInfo.loadArea.Size.Z
-	)
-
+function PalletPlacementRules.HasForbiddenOverlap(
+	boundsCFrame: CFrame,
+	boundsSize: Vector3,
+	ignoredInstances: { Instance }
+): boolean
 	local overlapParams = OverlapParams.new()
 	overlapParams.FilterType = Enum.RaycastFilterType.Exclude
 	overlapParams.FilterDescendantsInstances = ignoredInstances
 	overlapParams.MaxParts = 0
 
-	for _, part in Workspace:GetPartBoundsInBox(queryCFrame, querySize, overlapParams) do
+	local querySize = PlacementGeometry.GetShrunkSize(boundsSize)
+	for _, part in Workspace:GetPartBoundsInBox(boundsCFrame, querySize, overlapParams) do
 		local cargo = CarryItem.FindCarryableModel(part)
-		if cargo ~= nil then
-			return false
+		if cargo ~= nil or part.CanCollide then
+			return true
 		end
 	end
 
-	return true
+	return false
 end
 
 return PalletPlacementRules

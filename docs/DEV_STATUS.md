@@ -37,18 +37,24 @@ Last updated: 2026-10-02
 - While aiming at a valid empty pallet, the existing placement ghost snaps one box to the center of `LoadArea`, preserves 90-degree rotation relative to `LoadArea.CFrame`, and validates the full rotated footprint and total pallet-plus-cargo height.
 - `CarryService` independently rebuilds and validates pallet placement, including distance, empty-pallet state, footprint, `MaxHeight`, and collidable overlap, before moving the held item.
 - Free-world placement and identical-item stacking continue to use the Stage 04 path when no packing pallet is targeted.
+- Stage 05B first-layer pallet packing is complete and Studio-tested.
+- The first-layer grid is derived from the authored `LoadArea.Size`, the held item's rotated bounding footprint, and a shared 0.05-stud packing gap; it remains centered in `LoadArea` coordinates.
+- The placement ghost selects the nearest valid free cell to the player's aim point, skips occupied cells, and recalculates the grid after each 90-degree rotation.
+- A pallet remains targetable through already packed cargo by probing downward from the aimed box, so the player does not need to target exposed pallet geometry.
+- Pallet placement requests send pallet, cell indices, and rotation intent; the server rebuilds the grid and candidate CFrame before validating footprint, `MaxHeight`, distance, and overlap.
+- Stage 05B supports spatially compatible first-layer boxes without applying `ItemId`, ITEM, or FAST compatibility rules.
 
 ## Current milestone
-**Stage 05A — Pallet Detection + Single Box Snap — Complete and Studio-tested**
+**Stage 05B — First-Layer Pallet Packing — Complete and Studio-tested**
 
-Stages 01A Rack Geometry, 01B Slot Registry, 01C Slot Labels / Rack Numbers, 04A Basic Interaction / Carry, 04B Placement Preview, 04C Extended Placement / Identical Item Stacking, and 05A Pallet Detection + Single Box Snap are complete.
+Stages 01A Rack Geometry, 01B Slot Registry, 01C Slot Labels / Rack Numbers, 04A Basic Interaction / Carry, 04B Placement Preview, 04C Extended Placement / Identical Item Stacking, 05A Pallet Detection + Single Box Snap, and 05B First-Layer Pallet Packing are complete.
 
-The next milestone is Stage 05B First-Layer Pallet Packing.
+The next milestone is Stage 05C Multi-Layer Pallet Packing.
 
 ## Not implemented yet
 - Product/box systems.
 - Slot snapping, Slot occupancy, and horizontal multi-product packing.
-- Multi-box pallet packing and pallet layers.
+- Multi-layer pallet packing.
 - TSD/scanning.
 - Receiving.
 - ITEM/FAST runtime logic.
@@ -65,12 +71,13 @@ The next milestone is Stage 05B First-Layer Pallet Packing.
 5. 04B Placement Preview. **Complete.**
 6. 04C Extended Placement / Identical Item Stacking. **Complete.**
 7. 05A Pallet Detection + Single Box Snap. **Complete.**
-8. 05B First-Layer Pallet Packing. **Next.**
-9. TSD/scanning.
-10. Receiving.
-11. ITEM/FAST workflows.
-12. Putaway.
-13. Co-op/persistence.
+8. 05B First-Layer Pallet Packing. **Complete.**
+9. 05C Multi-Layer Pallet Packing. **Next.**
+10. TSD/scanning.
+11. Receiving.
+12. ITEM/FAST workflows.
+13. Putaway.
+14. Co-op/persistence.
 
 ## Update rule
 Only mark a milestone complete after successful Roblox Studio testing.

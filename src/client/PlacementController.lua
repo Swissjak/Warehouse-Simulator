@@ -40,6 +40,8 @@ local displayedValidity: boolean? = nil
 local boundsInfo: PlacementGeometry.BoundsInfo? = nil
 local candidateCFrame: CFrame? = nil
 local candidatePallet: Model? = nil
+local candidateCellX: number? = nil
+local candidateCellZ: number? = nil
 local candidateIsValid = false
 local rotationStep = 0
 local lastPlaceRequestTime = 0
@@ -96,6 +98,8 @@ local function destroyGhost()
 	boundsInfo = nil
 	candidateCFrame = nil
 	candidatePallet = nil
+	candidateCellX = nil
+	candidateCellZ = nil
 	candidateIsValid = false
 end
 
@@ -262,6 +266,111 @@ local function hasCollidableOverlap(boundsCFrame: CFrame, boundsSize: Vector3): 
 	return false
 end
 
+local function findPalletTarget(
+	result: RaycastResult?,
+	ignoredInstances: { Instance }
+): PalletPlacementRules.PalletInfo?
+	if result == nil then
+		return nil
+	end
+
+	local directPalletInfo = PalletPlacementRules.FindPalletInfo(result.Instance)
+	if directPalletInfo ~= nil then
+		return directPalletInfo
+	end
+
+	local hitCargo = CarryItem.FindCarryableModel(result.Instance)
+	if hitCargo == nil then
+		return nil
+	end
+
+	local probeIgnoredInstances = table.clone(ignoredInstances)
+	table.insert(probeIgnoredInstances, hitCargo)
+	return PalletPlacementRules.FindPalletBelowPosition(result.Position, probeIgnoredInstances)
+end
+
+local function getCellsByDistance(
+	gridInfo: PalletPlacementRules.GridInfo,
+	targetLocalPosition: Vector3
+): { PalletPlacementRules.GridCell }
+	local cells = table.clone(gridInfo.cells)
+	table.sort(cells, function(left: PalletPlacementRules.GridCell, right: PalletPlacementRules.GridCell): boolean
+		local leftDeltaX = left.localX - targetLocalPosition.X
+		local leftDeltaZ = left.localZ - targetLocalPosition.Z
+		local rightDeltaX = right.localX - targetLocalPosition.X
+		local rightDeltaZ = right.localZ - targetLocalPosition.Z
+		local leftDistance = leftDeltaX * leftDeltaX + leftDeltaZ * leftDeltaZ
+		local rightDistance = rightDeltaX * rightDeltaX + rightDeltaZ * rightDeltaZ
+		if leftDistance ~= rightDistance then
+			return leftDistance < rightDistance
+		end
+		if left.zIndex ~= right.zIndex then
+			return left.zIndex < right.zIndex
+		end
+		return left.xIndex < right.xIndex
+	end)
+
+	return cells
+end
+
+local function selectPalletCandidate(
+	palletInfo: PalletPlacementRules.PalletInfo,
+	hitPosition: Vector3,
+	currentBoundsInfo: PlacementGeometry.BoundsInfo,
+	ignoredInstances: { Instance },
+	humanoidRootPart: BasePart?
+): (CFrame, PalletPlacementRules.GridCell?, boolean)
+	local gridInfo = PalletPlacementRules.BuildGrid(palletInfo.loadArea, rotationStep, currentBoundsInfo)
+	local targetLocalPosition = palletInfo.loadArea.CFrame:PointToObjectSpace(hitPosition)
+	local sortedCells = getCellsByDistance(gridInfo, targetLocalPosition)
+	local overlapIgnoredInstances = table.clone(ignoredInstances)
+	table.insert(overlapIgnoredInstances, palletInfo.model)
+
+	local fallbackCFrame = PalletPlacementRules.CreateCandidateCFrame(
+		palletInfo.loadArea,
+		rotationStep,
+		currentBoundsInfo,
+		0,
+		0
+	)
+	for cellIndex, cell in sortedCells do
+		local cellCFrame = PalletPlacementRules.CreateCandidateCFrame(
+			palletInfo.loadArea,
+			rotationStep,
+			currentBoundsInfo,
+			cell.localX,
+			cell.localZ
+		)
+		if cellIndex == 1 then
+			fallbackCFrame = cellCFrame
+		end
+
+		local cellBoundsCFrame, cellBoundsSize = PlacementGeometry.GetWorldBounds(cellCFrame, currentBoundsInfo)
+		local distanceIsValid = humanoidRootPart ~= nil
+			and (humanoidRootPart.Position - cellCFrame.Position).Magnitude <= CarryConfig.PlacementDistance
+		local footprintIsValid = PalletPlacementRules.DoesFootprintFit(
+			palletInfo.loadArea,
+			cellBoundsCFrame,
+			cellBoundsSize
+		)
+		local heightIsValid = PalletPlacementRules.IsHeightValid(
+			palletInfo,
+			cellBoundsCFrame,
+			cellBoundsSize
+		)
+		local overlapIsValid = not PalletPlacementRules.HasForbiddenOverlap(
+			cellBoundsCFrame,
+			cellBoundsSize,
+			overlapIgnoredInstances
+		)
+		if distanceIsValid and footprintIsValid and heightIsValid and overlapIsValid then
+			return cellCFrame, cell, true
+		end
+	end
+
+	return fallbackCFrame, nil, false
+end
+
 local function updateCandidate()
 	local currentGhost = ghost
 	local currentItem = heldItem
@@ -270,6 +379,8 @@ local function updateCandidate()
 	if currentGhost == nil or currentItem == nil or currentBoundsInfo == nil or camera == nil then
 		candidateCFrame = nil
 		candidatePallet = nil
+		candidateCellX = nil
+		candidateCellZ = nil
 		candidateIsValid = false
 		return
 	end
@@ -288,35 +399,52 @@ local function updateCandidate()
 	local viewportCenter = camera.ViewportSize / 2
 	local ray = camera:ViewportPointToRay(viewportCenter.X, viewportCenter.Y)
 	local result = Workspace:Raycast(ray.Origin, ray.Direction * CarryConfig.PlacementRayDistance, raycastParams)
-	local palletInfo = if result ~= nil then PalletPlacementRules.FindPalletInfo(result.Instance) else nil
+	local palletInfo = findPalletTarget(result, ignoredInstances)
+	local humanoidRootPartValue = if character ~= nil then character:FindFirstChild("HumanoidRootPart") else nil
+	local humanoidRootPart = if humanoidRootPartValue ~= nil and humanoidRootPartValue:IsA("BasePart")
+		then humanoidRootPartValue
+		else nil
+	if palletInfo ~= nil and result ~= nil then
+		local palletCandidateCFrame, selectedCell, isValid = selectPalletCandidate(
+			palletInfo,
+			result.Position,
+			currentBoundsInfo,
+			ignoredInstances,
+			humanoidRootPart
+		)
+		currentGhost:PivotTo(palletCandidateCFrame)
+		candidateCFrame = palletCandidateCFrame
+		candidatePallet = palletInfo.model
+		candidateCellX = if selectedCell ~= nil then selectedCell.xIndex else nil
+		candidateCellZ = if selectedCell ~= nil then selectedCell.zIndex else nil
+		candidateIsValid = isValid
+		setGhostColor(candidateIsValid)
+		return
+	end
+
 	local raycastSupport = if result ~= nil then CarryItem.FindCarryableModel(result.Instance) else nil
 	local stackSupport = if raycastSupport ~= nil
-			and palletInfo == nil
 			and PlacementRules.HaveMatchingItemIds(currentItem, raycastSupport)
 		then raycastSupport
 		else nil
 	local surfacePoint = if result ~= nil
 		then result.Position
 		else ray.Origin + ray.Direction * CarryConfig.PlacementRayDistance
-	local newCandidateCFrame = if palletInfo ~= nil
-		then PalletPlacementRules.CreateCandidateCFrame(palletInfo.loadArea, rotationStep, currentBoundsInfo)
-		elseif stackSupport ~= nil
+	local newCandidateCFrame = if stackSupport ~= nil
 		then PlacementRules.CreateStackCandidateCFrame(stackSupport, rotationStep, currentBoundsInfo)
 		else PlacementGeometry.CreateCandidateCFrame(surfacePoint, rotationStep, currentBoundsInfo)
 	currentGhost:PivotTo(newCandidateCFrame)
 	candidateCFrame = newCandidateCFrame
-	candidatePallet = if palletInfo ~= nil then palletInfo.model else nil
+	candidatePallet = nil
+	candidateCellX = nil
+	candidateCellZ = nil
 
-	local surfaceIsValid = if palletInfo ~= nil
-		then result ~= nil
-		else result ~= nil
-			and result.Normal.Y >= CarryConfig.PlacementSurfaceNormalMinY
-			and result.Instance.CanCollide
-			and (raycastSupport == nil or stackSupport ~= nil)
+	local surfaceIsValid = result ~= nil
+		and result.Normal.Y >= CarryConfig.PlacementSurfaceNormalMinY
+		and result.Instance.CanCollide
+		and (raycastSupport == nil or stackSupport ~= nil)
 
-	local humanoidRootPart = if character ~= nil then character:FindFirstChild("HumanoidRootPart") else nil
 	local distanceIsValid = humanoidRootPart ~= nil
-		and humanoidRootPart:IsA("BasePart")
 		and (humanoidRootPart.Position - newCandidateCFrame.Position).Magnitude <= CarryConfig.PlacementDistance
 
 	local candidateBoundsCFrame, candidateBoundsSize =
@@ -327,28 +455,6 @@ local function updateCandidate()
 	end
 	overlapParams.FilterDescendantsInstances = overlapIgnoredInstances
 	local overlapIsValid = not hasCollidableOverlap(candidateBoundsCFrame, candidateBoundsSize)
-	if palletInfo ~= nil then
-		local footprintIsValid = PalletPlacementRules.DoesFootprintFit(
-			palletInfo.loadArea,
-			candidateBoundsCFrame,
-			candidateBoundsSize
-		)
-		local heightIsValid = PalletPlacementRules.IsHeightValid(
-			palletInfo,
-			candidateBoundsCFrame,
-			candidateBoundsSize
-		)
-		local palletIsEmpty = PalletPlacementRules.IsEmpty(palletInfo, ignoredInstances)
-
-		candidateIsValid = surfaceIsValid
-			and distanceIsValid
-			and footprintIsValid
-			and heightIsValid
-			and palletIsEmpty
-			and overlapIsValid
-		setGhostColor(candidateIsValid)
-		return
-	end
 
 	local candidateBottomY = PlacementGeometry.GetBoundsBottomY(candidateBoundsCFrame, candidateBoundsSize)
 	local candidateTopY = PlacementGeometry.GetBoundsTopY(candidateBoundsCFrame, candidateBoundsSize)
@@ -391,7 +497,14 @@ function PlacementController.TryPlace()
 	end
 	lastPlaceRequestTime = now
 
-	carryRemote:FireServer("Place", candidateCFrame, rotationStep, candidatePallet)
+	if candidatePallet ~= nil then
+		if candidateCellX == nil or candidateCellZ == nil then
+			return
+		end
+		carryRemote:FireServer("PlacePallet", candidatePallet, candidateCellX, candidateCellZ, rotationStep)
+	else
+		carryRemote:FireServer("Place", candidateCFrame, rotationStep)
+	end
 end
 
 function PlacementController.Start()
