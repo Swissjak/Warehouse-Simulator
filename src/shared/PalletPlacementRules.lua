@@ -16,19 +16,19 @@ export type PalletInfo = {
 	maxHeight: number,
 }
 
-export type GridCell = {
+export type FirstLayerCandidate = {
 	xIndex: number,
 	zIndex: number,
 	localX: number,
 	localZ: number,
 }
 
-export type GridInfo = {
+export type FirstLayerCandidateSet = {
 	countX: number,
 	countZ: number,
 	footprintX: number,
 	footprintZ: number,
-	cells: { GridCell },
+	candidates: { FirstLayerCandidate },
 }
 
 local function isPositiveFiniteNumber(value: unknown): boolean
@@ -255,11 +255,70 @@ function PalletPlacementRules.DoesFootprintFitSupport(
 	return true
 end
 
-function PalletPlacementRules.BuildGrid(
-	loadArea: BasePart,
+local function addCandidateCoordinate(coordinates: { number }, value: number, minimum: number, maximum: number)
+	local epsilon = CarryConfig.PalletCandidateCoordinateEpsilon
+	if minimum > maximum then
+		return
+	end
+	if value < minimum - epsilon or value > maximum + epsilon then
+		return
+	end
+
+	local clampedValue = math.clamp(value, minimum, maximum)
+	for _, existingValue in coordinates do
+		if math.abs(existingValue - clampedValue) <= epsilon then
+			return
+		end
+	end
+
+	table.insert(coordinates, clampedValue)
+end
+
+local function getFirstLayerCargo(palletInfo: PalletInfo): { Model }
+	local loadArea = palletInfo.loadArea
+	local tolerance = CarryConfig.StackContactTolerance
+	local queryHeight = palletInfo.maxHeight + tolerance * 2
+	local queryCFrame = loadArea.CFrame * CFrame.new(0, queryHeight / 2 - tolerance, 0)
+	local querySize = Vector3.new(
+		loadArea.Size.X + tolerance * 2,
+		queryHeight,
+		loadArea.Size.Z + tolerance * 2
+	)
+	local overlapParams = OverlapParams.new()
+	overlapParams.FilterType = Enum.RaycastFilterType.Exclude
+	overlapParams.FilterDescendantsInstances = { palletInfo.model }
+	overlapParams.MaxParts = 0
+
+	local cargoModels: { Model } = {}
+	local seenCargo: { [Model]: boolean } = {}
+	for _, part in Workspace:GetPartBoundsInBox(queryCFrame, querySize, overlapParams) do
+		local cargo = CarryItem.FindCarryableModel(part)
+		if cargo == nil or seenCargo[cargo] == true then
+			continue
+		end
+		seenCargo[cargo] = true
+
+		local associatedPalletInfo = PalletPlacementRules.GetAssociatedPalletInfo(cargo)
+		if associatedPalletInfo == nil or associatedPalletInfo.model ~= palletInfo.model then
+			continue
+		end
+
+		local boundsCFrame, boundsSize = cargo:GetBoundingBox()
+		local cargoBottomY = PlacementGeometry.GetBoundsBottomY(boundsCFrame, boundsSize)
+		if math.abs(cargoBottomY - loadArea.Position.Y) <= tolerance then
+			table.insert(cargoModels, cargo)
+		end
+	end
+
+	return cargoModels
+end
+
+function PalletPlacementRules.BuildFirstLayerCandidates(
+	palletInfo: PalletInfo,
 	rotationStep: number,
 	boundsInfo: PlacementGeometry.BoundsInfo
-): GridInfo
+): FirstLayerCandidateSet
+	local loadArea = palletInfo.loadArea
 	local centeredCFrame = PalletPlacementRules.CreateCandidateCFrame(
 		loadArea,
 		rotationStep,
@@ -275,39 +334,98 @@ function PalletPlacementRules.BuildGrid(
 	)
 	local footprintX = maximumX - minimumX
 	local footprintZ = maximumZ - minimumZ
+	local halfFootprintX = footprintX / 2
+	local halfFootprintZ = footprintZ / 2
+	local halfArea = loadArea.Size / 2
+	local minimumCenterX = -halfArea.X + halfFootprintX
+	local maximumCenterX = halfArea.X - halfFootprintX
+	local minimumCenterZ = -halfArea.Z + halfFootprintZ
+	local maximumCenterZ = halfArea.Z - halfFootprintZ
+	local candidateXs: { number } = {}
+	local candidateZs: { number } = {}
+
+	if minimumCenterX <= maximumCenterX then
+		addCandidateCoordinate(candidateXs, minimumCenterX, minimumCenterX, maximumCenterX)
+		addCandidateCoordinate(candidateXs, 0, minimumCenterX, maximumCenterX)
+		addCandidateCoordinate(candidateXs, maximumCenterX, minimumCenterX, maximumCenterX)
+	end
+	if minimumCenterZ <= maximumCenterZ then
+		addCandidateCoordinate(candidateZs, minimumCenterZ, minimumCenterZ, maximumCenterZ)
+		addCandidateCoordinate(candidateZs, 0, minimumCenterZ, maximumCenterZ)
+		addCandidateCoordinate(candidateZs, maximumCenterZ, minimumCenterZ, maximumCenterZ)
+	end
+
 	local gap = CarryConfig.PalletPackingGap
-	local countX = math.max(math.floor((loadArea.Size.X + gap) / (footprintX + gap)), 0)
-	local countZ = math.max(math.floor((loadArea.Size.Z + gap) / (footprintZ + gap)), 0)
-	local cells: { GridCell } = {}
+	for _, cargo in getFirstLayerCargo(palletInfo) do
+		local cargoBoundsCFrame, cargoBoundsSize = cargo:GetBoundingBox()
+		local cargoMinimumX, cargoMaximumX, cargoMinimumZ, cargoMaximumZ = getFootprintExtents(
+			loadArea,
+			cargoBoundsCFrame,
+			cargoBoundsSize
+		)
+		addCandidateCoordinate(
+			candidateXs,
+			cargoMinimumX - gap - halfFootprintX,
+			minimumCenterX,
+			maximumCenterX
+		)
+		addCandidateCoordinate(
+			candidateXs,
+			cargoMaximumX + gap + halfFootprintX,
+			minimumCenterX,
+			maximumCenterX
+		)
+		addCandidateCoordinate(
+			candidateZs,
+			cargoMinimumZ - gap - halfFootprintZ,
+			minimumCenterZ,
+			maximumCenterZ
+		)
+		addCandidateCoordinate(
+			candidateZs,
+			cargoMaximumZ + gap + halfFootprintZ,
+			minimumCenterZ,
+			maximumCenterZ
+		)
+	end
+	table.sort(candidateXs)
+	table.sort(candidateZs)
 
-	if countX > 0 and countZ > 0 then
-		local usedX = countX * footprintX + (countX - 1) * gap
-		local usedZ = countZ * footprintZ + (countZ - 1) * gap
-		local startX = -usedX / 2 + footprintX / 2
-		local startZ = -usedZ / 2 + footprintZ / 2
-
-		for zIndex = 1, countZ do
-			for xIndex = 1, countX do
-				table.insert(cells, {
+	local candidates: { FirstLayerCandidate } = {}
+	for zIndex, localZ in candidateZs do
+		for xIndex, localX in candidateXs do
+			local candidateCFrame = PalletPlacementRules.CreateCandidateCFrame(
+				loadArea,
+				rotationStep,
+				boundsInfo,
+				localX,
+				localZ
+			)
+			local candidateBoundsCFrame, candidateBoundsSize = PlacementGeometry.GetWorldBounds(
+				candidateCFrame,
+				boundsInfo
+			)
+			if PalletPlacementRules.DoesFootprintFit(loadArea, candidateBoundsCFrame, candidateBoundsSize) then
+				table.insert(candidates, {
 					xIndex = xIndex,
 					zIndex = zIndex,
-					localX = startX + (xIndex - 1) * (footprintX + gap),
-					localZ = startZ + (zIndex - 1) * (footprintZ + gap),
+					localX = localX,
+					localZ = localZ,
 				})
 			end
 		end
 	end
 
 	return {
-		countX = countX,
-		countZ = countZ,
+		countX = #candidateXs,
+		countZ = #candidateZs,
 		footprintX = footprintX,
 		footprintZ = footprintZ,
-		cells = cells,
+		candidates = candidates,
 	}
 end
 
-function PalletPlacementRules.IsGridIndex(value: unknown): boolean
+function PalletPlacementRules.IsCandidateIndex(value: unknown): boolean
 	return typeof(value) == "number"
 		and value == value
 		and math.abs(value) < math.huge
@@ -315,13 +433,22 @@ function PalletPlacementRules.IsGridIndex(value: unknown): boolean
 		and value >= 1
 end
 
-function PalletPlacementRules.GetGridCell(gridInfo: GridInfo, xIndex: number, zIndex: number): GridCell?
-	if xIndex > gridInfo.countX or zIndex > gridInfo.countZ then
+function PalletPlacementRules.GetFirstLayerCandidate(
+	candidateSet: FirstLayerCandidateSet,
+	xIndex: number,
+	zIndex: number
+): FirstLayerCandidate?
+	if xIndex > candidateSet.countX or zIndex > candidateSet.countZ then
 		return nil
 	end
 
-	local linearIndex = (zIndex - 1) * gridInfo.countX + xIndex
-	return gridInfo.cells[linearIndex]
+	for _, candidate in candidateSet.candidates do
+		if candidate.xIndex == xIndex and candidate.zIndex == zIndex then
+			return candidate
+		end
+	end
+
+	return nil
 end
 
 function PalletPlacementRules.GetPalletBottomY(pallet: Model): number

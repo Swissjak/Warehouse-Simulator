@@ -23,6 +23,7 @@ local CarryConfig = {
 	SlotProbeInset = 0.05,
 	PalletFootprintTolerance = 0.05,
 	PalletPackingGap = 0.05,
+	PalletCandidateCoordinateEpsilon = 0.001,
 	PalletCargoProbeDistance = 10,
 	PackedPalletObjectName = "PackedPallet",
 	PlacementPositionTolerance = 0.2,

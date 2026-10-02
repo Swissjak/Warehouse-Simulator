@@ -355,8 +355,8 @@ local function validatePalletPlacement(
 	if
 		typeof(palletValue) ~= "Instance"
 		or not palletValue:IsA("Model")
-		or not PalletPlacementRules.IsGridIndex(xIndexValue)
-		or not PalletPlacementRules.IsGridIndex(zIndexValue)
+		or not PalletPlacementRules.IsCandidateIndex(xIndexValue)
+		or not PalletPlacementRules.IsCandidateIndex(zIndexValue)
 		or not PlacementGeometry.IsRotationStep(rotationStepValue)
 	then
 		return nil, nil
@@ -382,13 +382,13 @@ local function validatePalletPlacement(
 
 	local rotationStep = rotationStepValue :: number
 	local boundsInfo = PlacementGeometry.GetBoundsInfo(state.item)
-	local gridInfo = PalletPlacementRules.BuildGrid(palletInfo.loadArea, rotationStep, boundsInfo)
-	local cell = PalletPlacementRules.GetGridCell(
-		gridInfo,
+	local candidateSet = PalletPlacementRules.BuildFirstLayerCandidates(palletInfo, rotationStep, boundsInfo)
+	local candidate = PalletPlacementRules.GetFirstLayerCandidate(
+		candidateSet,
 		xIndexValue :: number,
 		zIndexValue :: number
 	)
-	if cell == nil then
+	if candidate == nil then
 		return nil, nil
 	end
 
@@ -396,8 +396,8 @@ local function validatePalletPlacement(
 		palletInfo.loadArea,
 		rotationStep,
 		boundsInfo,
-		cell.localX,
-		cell.localZ
+		candidate.localX,
+		candidate.localZ
 	)
 	local maximumDistance = CarryConfig.PlacementDistance + CarryConfig.ServerDistanceTolerance
 	if (humanoidRootPart.Position - candidateCFrame.Position).Magnitude > maximumDistance then

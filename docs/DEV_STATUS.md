@@ -38,10 +38,12 @@ Last updated: 2026-10-02
 - `CarryService` independently rebuilds and validates pallet placement, including distance, empty-pallet state, footprint, `MaxHeight`, and collidable overlap, before moving the held item.
 - Free-world placement and identical-item stacking continue to use the Stage 04 path when no packing pallet is targeted.
 - Stage 05B first-layer pallet packing is complete and Studio-tested.
-- The first-layer grid is derived from the authored `LoadArea.Size`, the held item's rotated bounding footprint, and a shared 0.05-stud packing gap; it remains centered in `LoadArea` coordinates.
-- The placement ghost selects the nearest valid free cell to the player's aim point, skips occupied cells, and recalculates the grid after each 90-degree rotation.
+- The Stage 05B edge-based snap refinement is complete and Studio-tested with differently sized boxes.
+- First-layer candidates are derived from the authored `LoadArea` edges and center plus the local-space edges of existing first-layer cargo; adjacent candidates use the shared 0.05-stud packing gap.
+- Candidate coordinates use the held Model's actual rotated footprint, remain inside `LoadArea`, and are deduplicated without introducing a dense micro-grid.
+- The placement ghost selects the nearest valid candidate to the player's aim point, skips occupied candidates, and rebuilds the set after each 90-degree rotation.
 - A pallet remains targetable through already packed cargo by probing downward from the aimed box, so the player does not need to target exposed pallet geometry.
-- Pallet placement requests send pallet, cell indices, and rotation intent; the server rebuilds the grid and candidate CFrame before validating footprint, `MaxHeight`, distance, and overlap.
+- Pallet placement requests send pallet, candidate-coordinate indices, and rotation intent; the server rebuilds the same candidate set and CFrame before validating footprint, `MaxHeight`, distance, and overlap.
 - Stage 05B supports spatially compatible first-layer boxes without applying `ItemId`, ITEM, or FAST compatibility rules.
 - Stage 05C multi-layer pallet packing is complete and Studio-tested.
 - Aiming at packed cargo selects that exact box as a vertical support; invalid vertical placement remains red and does not silently fall back to a free first-layer cell.
