@@ -27,15 +27,22 @@ Last updated: 2026-10-02
 - The placement ghost uses a prominent green/red `Highlight`, supports discrete 90-degree rotation with `R`, and accounts for Model pivot/bounding-box offset when resting on a surface.
 - `E` is the primary placement confirmation and `LMB` is an alias; invalid placement sends no request and leaves the item held.
 - `CarryService` independently validates placement distance, upright rotation step, horizontal support, and collidable overlap before placing the real Model and restoring its carry states.
+- Stage 04C extended placement and identical-item stacking is complete and Studio-tested.
+- Pickup remains limited to 8 studs, while placement uses a separate 12-stud interaction distance.
+- Boxes with the same non-empty `ItemId` align and stack directly on one another; boxes with different `ItemId` values cannot form a valid stack.
+- Stack height is validated against a containing Slot's `MaxHeight` attribute when available, or the configured free-world maximum height otherwise.
+- Client preview and server validation share placement rules for stack alignment and height, while the server remains authoritative for the final placement decision.
 
 ## Current milestone
-**Stage 04B — Placement Preview — Complete and Studio-tested**
+**Stage 04 — Interaction / Carry / Place — Complete and Studio-tested**
 
-Stages 01A Rack Geometry, 01B Slot Registry, 01C Slot Labels / Rack Numbers, 04A Basic Interaction / Carry, and 04B Placement Preview are complete.
+Stages 01A Rack Geometry, 01B Slot Registry, 01C Slot Labels / Rack Numbers, 04A Basic Interaction / Carry, 04B Placement Preview, and 04C Extended Placement / Identical Item Stacking are complete.
+
+The completed Stage 04 behavior and boundaries are documented in `docs/stages/04-interaction-carry-placement.md`.
 
 ## Not implemented yet
 - Product/box systems.
-- Extended placement, identical-item stacking, Slot height validation, snapping, and slot placement.
+- Slot snapping, Slot occupancy, and horizontal multi-product packing.
 - Pallet packing.
 - TSD/scanning.
 - Receiving.
@@ -51,7 +58,7 @@ Stages 01A Rack Geometry, 01B Slot Registry, 01C Slot Labels / Rack Numbers, 04A
 3. 01C Slot Labels / Rack Numbers. **Complete.**
 4. 04A Basic Interaction / Carry. **Complete.**
 5. 04B Placement Preview. **Complete.**
-6. 04C Extended Placement / Identical Item Stacking.
+6. 04C Extended Placement / Identical Item Stacking. **Complete.**
 7. Pallet packing.
 8. TSD/scanning.
 9. Receiving.

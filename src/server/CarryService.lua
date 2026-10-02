@@ -8,6 +8,8 @@ local WarehouseShared = ReplicatedStorage:WaitForChild("WarehouseShared")
 local CarryConfig = require(WarehouseShared:WaitForChild("CarryConfig"))
 local CarryItem = require(WarehouseShared:WaitForChild("CarryItem"))
 local PlacementGeometry = require(WarehouseShared:WaitForChild("PlacementGeometry"))
+local PlacementRules = require(WarehouseShared:WaitForChild("PlacementRules"))
+local SlotRegistry = require(script.Parent.SlotRegistry)
 
 local CarryService = {}
 
@@ -184,7 +186,7 @@ local function isPickupValid(player: Player, item: Model): (boolean, BasePart?)
 		return false, nil
 	end
 
-	local maximumDistance = CarryConfig.InteractionDistance + CarryConfig.ServerDistanceTolerance
+	local maximumDistance = CarryConfig.PickupDistance + CarryConfig.ServerDistanceTolerance
 	if (humanoidRootPart.Position - root.Position).Magnitude > maximumDistance then
 		return false, nil
 	end
@@ -291,6 +293,30 @@ local function orientationMatchesRotationStep(requestedCFrame: CFrame, rotationS
 		and requestedCFrame.LookVector:Dot(expectedRotation.LookVector) >= minimumDot
 end
 
+local function getRegisteredSlotMaxHeight(worldPosition: Vector3): number?
+	local entries = SlotRegistry.GetAll()
+	local slotParts: { BasePart } = {}
+
+	for _, entry in entries do
+		if entry.Instance.Parent ~= nil then
+			table.insert(slotParts, entry.Instance)
+		end
+	end
+
+	local slot = PlacementRules.FindContainingSlot(slotParts, worldPosition)
+	if slot == nil then
+		return nil
+	end
+
+	for _, entry in entries do
+		if entry.Instance == slot then
+			return entry.MaxHeight
+		end
+	end
+
+	return nil
+end
+
 local function validatePlacement(player: Player, requestedCFrame: CFrame, rotationStep: number): CFrame?
 	local state = heldByPlayer[player]
 	if state == nil then
@@ -321,7 +347,7 @@ local function validatePlacement(player: Player, requestedCFrame: CFrame, rotati
 		return nil
 	end
 
-	local maximumDistance = CarryConfig.InteractionDistance + CarryConfig.ServerDistanceTolerance
+	local maximumDistance = CarryConfig.PlacementDistance + CarryConfig.ServerDistanceTolerance
 	if (humanoidRootPart.Position - requestedCFrame.Position).Magnitude > maximumDistance then
 		return nil
 	end
@@ -347,25 +373,63 @@ local function validatePlacement(player: Player, requestedCFrame: CFrame, rotati
 		surfaceResult == nil
 		or not surfaceResult.Instance.CanCollide
 		or surfaceResult.Normal.Y < CarryConfig.PlacementSurfaceNormalMinY
-		or CarryItem.FindCarryableModel(surfaceResult.Instance) ~= nil
 	then
 		return nil
+	end
+
+	local stackSupport = CarryItem.FindCarryableModel(surfaceResult.Instance)
+	if stackSupport ~= nil then
+		if
+			stackSupport == state.item
+			or stackSupport.Parent == nil
+			or not stackSupport:IsDescendantOf(Workspace)
+			or not PlacementRules.HaveMatchingItemIds(state.item, stackSupport)
+		then
+			return nil
+		end
 	end
 	if math.abs(surfaceResult.Position.Y - candidateBottomY) > CarryConfig.PlacementSurfaceHeightTolerance then
 		return nil
 	end
 
-	local validatedCFrame = PlacementGeometry.CreateCandidateCFrame(
-		Vector3.new(requestedCFrame.Position.X, surfaceResult.Position.Y, requestedCFrame.Position.Z),
-		rotationStep,
-		boundsInfo
-	)
+	local validatedCFrame = if stackSupport ~= nil
+		then PlacementRules.CreateStackCandidateCFrame(stackSupport, rotationStep, boundsInfo)
+		else PlacementGeometry.CreateCandidateCFrame(
+			Vector3.new(requestedCFrame.Position.X, surfaceResult.Position.Y, requestedCFrame.Position.Z),
+			rotationStep,
+			boundsInfo
+		)
+	if (requestedCFrame.Position - validatedCFrame.Position).Magnitude > CarryConfig.PlacementPositionTolerance then
+		return nil
+	end
 	if (humanoidRootPart.Position - validatedCFrame.Position).Magnitude > maximumDistance then
 		return nil
 	end
 
 	local validatedBoundsCFrame, validatedBoundsSize = PlacementGeometry.GetWorldBounds(validatedCFrame, boundsInfo)
-	if hasCollidableOverlap(validatedBoundsCFrame, validatedBoundsSize, { character, state.item }) then
+	local candidateBottomYValidated = PlacementGeometry.GetBoundsBottomY(validatedBoundsCFrame, validatedBoundsSize)
+	local candidateTopY = PlacementGeometry.GetBoundsTopY(validatedBoundsCFrame, validatedBoundsSize)
+	local ignoredInstances: { Instance } = { character, state.item }
+	local itemId = PlacementRules.GetItemId(state.item)
+	local stackBottomY = if stackSupport ~= nil and itemId ~= nil
+		then PlacementRules.FindStackBottomY(stackSupport, itemId, ignoredInstances)
+		else candidateBottomYValidated
+	local slotProbePosition = Vector3.new(
+		validatedBoundsCFrame.Position.X,
+		stackBottomY + CarryConfig.SlotProbeInset,
+		validatedBoundsCFrame.Position.Z
+	)
+	local slotMaxHeight = getRegisteredSlotMaxHeight(slotProbePosition)
+	local effectiveMaxHeight = slotMaxHeight or CarryConfig.DefaultFreeStackMaxHeight
+	local stackHeight = candidateTopY - stackBottomY
+	if stackHeight > effectiveMaxHeight + CarryConfig.StackHeightTolerance then
+		return nil
+	end
+
+	if stackSupport ~= nil then
+		table.insert(ignoredInstances, stackSupport)
+	end
+	if hasCollidableOverlap(validatedBoundsCFrame, validatedBoundsSize, ignoredInstances) then
 		return nil
 	end
 

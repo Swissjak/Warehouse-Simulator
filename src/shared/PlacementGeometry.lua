@@ -53,6 +53,10 @@ function PlacementGeometry.GetBoundsBottomY(boundsCFrame: CFrame, boundsSize: Ve
 	return boundsCFrame.Position.Y - projectedHalfHeight(boundsCFrame, boundsSize)
 end
 
+function PlacementGeometry.GetBoundsTopY(boundsCFrame: CFrame, boundsSize: Vector3): number
+	return boundsCFrame.Position.Y + projectedHalfHeight(boundsCFrame, boundsSize)
+end
+
 function PlacementGeometry.CreateCandidateCFrame(
 	surfacePoint: Vector3,
 	rotationStep: number,

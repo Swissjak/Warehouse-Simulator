@@ -63,7 +63,7 @@ local function findTarget(): Model?
 
 	local viewportCenter = camera.ViewportSize / 2
 	local ray = camera:ViewportPointToRay(viewportCenter.X, viewportCenter.Y)
-	local result = Workspace:Raycast(ray.Origin, ray.Direction * CarryConfig.InteractionDistance, raycastParams)
+	local result = Workspace:Raycast(ray.Origin, ray.Direction * CarryConfig.PickupDistance, raycastParams)
 	if result == nil then
 		return nil
 	end

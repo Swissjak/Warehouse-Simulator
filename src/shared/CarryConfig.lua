@@ -1,7 +1,8 @@
 --!strict
 
 local CarryConfig = {
-	InteractionDistance = 8,
+	PickupDistance = 8,
+	PlacementDistance = 12,
 	ServerDistanceTolerance = 1,
 	CarryDistance = 3.5,
 	RequestCooldown = 0.15,
@@ -14,6 +15,13 @@ local CarryConfig = {
 	PlacementOrientationDotTolerance = 0.9999,
 	RotationStepDegrees = 90,
 	RotationStepCount = 4,
+	DefaultFreeStackMaxHeight = 8,
+	StackCenterTolerance = 0.15,
+	StackContactTolerance = 0.15,
+	StackHeightTolerance = 0.05,
+	SlotContainmentTolerance = 0.05,
+	SlotProbeInset = 0.05,
+	PlacementPositionTolerance = 0.2,
 	GhostTransparency = 0.65,
 	RemotesFolderName = "Remotes",
 	RemoteEventName = "CarryRequest",

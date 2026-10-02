@@ -10,6 +10,7 @@ local WarehouseShared = ReplicatedStorage:WaitForChild("WarehouseShared")
 local CarryConfig = require(WarehouseShared:WaitForChild("CarryConfig"))
 local CarryItem = require(WarehouseShared:WaitForChild("CarryItem"))
 local PlacementGeometry = require(WarehouseShared:WaitForChild("PlacementGeometry"))
+local PlacementRules = require(WarehouseShared:WaitForChild("PlacementRules"))
 
 local PlacementController = {}
 
@@ -40,6 +41,8 @@ local candidateCFrame: CFrame? = nil
 local candidateIsValid = false
 local rotationStep = 0
 local lastPlaceRequestTime = 0
+local cachedGeneratedRacks: Instance? = nil
+local slotParts: { BasePart } = {}
 
 local raycastParams = RaycastParams.new()
 raycastParams.FilterType = Enum.RaycastFilterType.Exclude
@@ -48,6 +51,36 @@ raycastParams.IgnoreWater = true
 local overlapParams = OverlapParams.new()
 overlapParams.FilterType = Enum.RaycastFilterType.Exclude
 overlapParams.MaxParts = 0
+
+local function refreshSlotParts()
+	slotParts = {}
+	cachedGeneratedRacks = nil
+
+	local warehouse = Workspace:FindFirstChild("Warehouse")
+	local generatedRacks = if warehouse ~= nil then warehouse:FindFirstChild("GeneratedRacks") else nil
+	if generatedRacks == nil then
+		return
+	end
+	cachedGeneratedRacks = generatedRacks
+
+	for _, descendant in generatedRacks:GetDescendants() do
+		if
+			descendant:IsA("BasePart")
+			and typeof(descendant:GetAttribute("SlotId")) == "string"
+			and PlacementRules.GetSlotMaxHeight(descendant) ~= nil
+		then
+			table.insert(slotParts, descendant)
+		end
+	end
+end
+
+local function getSlotParts(): { BasePart }
+	if cachedGeneratedRacks == nil or cachedGeneratedRacks.Parent == nil or #slotParts == 0 then
+		refreshSlotParts()
+	end
+
+	return slotParts
+end
 
 local function destroyGhost()
 	if ghost ~= nil then
@@ -200,6 +233,7 @@ local function setHeldItem(item: Model?)
 	rotationStep = 0
 
 	if item ~= nil and item.Parent ~= nil then
+		refreshSlotParts()
 		heldItemDestroyingConnection = item.Destroying:Connect(function()
 			restoreHeldItemVisibility()
 			heldItem = nil
@@ -246,33 +280,61 @@ local function updateCandidate()
 		table.insert(ignoredInstances, character)
 	end
 	raycastParams.FilterDescendantsInstances = ignoredInstances
-	overlapParams.FilterDescendantsInstances = ignoredInstances
 
 	local viewportCenter = camera.ViewportSize / 2
 	local ray = camera:ViewportPointToRay(viewportCenter.X, viewportCenter.Y)
 	local result = Workspace:Raycast(ray.Origin, ray.Direction * CarryConfig.PlacementRayDistance, raycastParams)
+	local raycastSupport = if result ~= nil then CarryItem.FindCarryableModel(result.Instance) else nil
+	local stackSupport = if raycastSupport ~= nil
+			and PlacementRules.HaveMatchingItemIds(currentItem, raycastSupport)
+		then raycastSupport
+		else nil
 	local surfacePoint = if result ~= nil
 		then result.Position
 		else ray.Origin + ray.Direction * CarryConfig.PlacementRayDistance
-	local newCandidateCFrame = PlacementGeometry.CreateCandidateCFrame(surfacePoint, rotationStep, currentBoundsInfo)
+	local newCandidateCFrame = if stackSupport ~= nil
+		then PlacementRules.CreateStackCandidateCFrame(stackSupport, rotationStep, currentBoundsInfo)
+		else PlacementGeometry.CreateCandidateCFrame(surfacePoint, rotationStep, currentBoundsInfo)
 	currentGhost:PivotTo(newCandidateCFrame)
 	candidateCFrame = newCandidateCFrame
 
 	local surfaceIsValid = result ~= nil
 		and result.Normal.Y >= CarryConfig.PlacementSurfaceNormalMinY
 		and result.Instance.CanCollide
-		and CarryItem.FindCarryableModel(result.Instance) == nil
+		and (raycastSupport == nil or stackSupport ~= nil)
 
 	local humanoidRootPart = if character ~= nil then character:FindFirstChild("HumanoidRootPart") else nil
 	local distanceIsValid = humanoidRootPart ~= nil
 		and humanoidRootPart:IsA("BasePart")
-		and (humanoidRootPart.Position - newCandidateCFrame.Position).Magnitude <= CarryConfig.InteractionDistance
+		and (humanoidRootPart.Position - newCandidateCFrame.Position).Magnitude <= CarryConfig.PlacementDistance
 
 	local candidateBoundsCFrame, candidateBoundsSize =
 		PlacementGeometry.GetWorldBounds(newCandidateCFrame, currentBoundsInfo)
+	local overlapIgnoredInstances = table.clone(ignoredInstances)
+	if stackSupport ~= nil then
+		table.insert(overlapIgnoredInstances, stackSupport)
+	end
+	overlapParams.FilterDescendantsInstances = overlapIgnoredInstances
 	local overlapIsValid = not hasCollidableOverlap(candidateBoundsCFrame, candidateBoundsSize)
 
-	candidateIsValid = surfaceIsValid and distanceIsValid and overlapIsValid
+	local candidateBottomY = PlacementGeometry.GetBoundsBottomY(candidateBoundsCFrame, candidateBoundsSize)
+	local candidateTopY = PlacementGeometry.GetBoundsTopY(candidateBoundsCFrame, candidateBoundsSize)
+	local itemId = PlacementRules.GetItemId(currentItem)
+	local stackBottomY = if stackSupport ~= nil and itemId ~= nil
+		then PlacementRules.FindStackBottomY(stackSupport, itemId, ignoredInstances)
+		else candidateBottomY
+	local slotProbePosition = Vector3.new(
+		candidateBoundsCFrame.Position.X,
+		stackBottomY + CarryConfig.SlotProbeInset,
+		candidateBoundsCFrame.Position.Z
+	)
+	local slot = PlacementRules.FindContainingSlot(getSlotParts(), slotProbePosition)
+	local slotMaxHeight = if slot ~= nil then PlacementRules.GetSlotMaxHeight(slot) else nil
+	local effectiveMaxHeight = slotMaxHeight or CarryConfig.DefaultFreeStackMaxHeight
+	local stackHeight = candidateTopY - stackBottomY
+	local heightIsValid = stackHeight <= effectiveMaxHeight + CarryConfig.StackHeightTolerance
+
+	candidateIsValid = surfaceIsValid and distanceIsValid and overlapIsValid and heightIsValid
 	setGhostColor(candidateIsValid)
 end
 
