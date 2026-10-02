@@ -10,6 +10,7 @@ local CarryItem = require(WarehouseShared:WaitForChild("CarryItem"))
 local PlacementGeometry = require(WarehouseShared:WaitForChild("PlacementGeometry"))
 local PlacementRules = require(WarehouseShared:WaitForChild("PlacementRules"))
 local PalletPlacementRules = require(WarehouseShared:WaitForChild("PalletPlacementRules"))
+local PalletRegistry = require(script.Parent.PalletRegistry)
 local SlotRegistry = require(script.Parent.SlotRegistry)
 
 local CarryService = {}
@@ -49,29 +50,6 @@ local function getItemLabel(item: Model): string
 	end
 
 	return item.Name
-end
-
-local function clearPackedPalletAssociation(item: Model)
-	item:SetAttribute("PackedOnPallet", nil)
-	item:SetAttribute("PalletId", nil)
-
-	local association = item:FindFirstChild(CarryConfig.PackedPalletObjectName)
-	if association ~= nil then
-		association:Destroy()
-	end
-end
-
-local function setPackedPalletAssociation(item: Model, pallet: Model)
-	clearPackedPalletAssociation(item)
-
-	local association = Instance.new("ObjectValue")
-	association.Name = CarryConfig.PackedPalletObjectName
-	association.Value = pallet
-	association.Parent = item
-
-	item:SetAttribute("PackedOnPallet", true)
-	local palletId = pallet:GetAttribute("ItemId")
-	item:SetAttribute("PalletId", if typeof(palletId) == "string" and palletId ~= "" then palletId else nil)
 end
 
 local function setRootCFrame(item: Model, root: BasePart, targetCFrame: CFrame)
@@ -236,7 +214,7 @@ local function pickupItem(player: Player, item: Model)
 	if #parts == 0 then
 		return
 	end
-	clearPackedPalletAssociation(item)
+	PalletRegistry.RemoveItemFromCurrentPallet(item)
 	local originalPrimaryPart = item.PrimaryPart
 	if item.PrimaryPart == nil then
 		item.PrimaryPart = root
@@ -676,9 +654,9 @@ local function finishPlacement(player: Player, validatedCFrame: CFrame, pallet: 
 	end
 	state.item:PivotTo(validatedCFrame)
 	if pallet ~= nil then
-		setPackedPalletAssociation(state.item, pallet)
+		PalletRegistry.AddItem(pallet, state.item)
 	else
-		clearPackedPalletAssociation(state.item)
+		PalletRegistry.RemoveItemFromCurrentPallet(state.item)
 	end
 	state.root.AssemblyLinearVelocity = Vector3.zero
 	state.root.AssemblyAngularVelocity = Vector3.zero

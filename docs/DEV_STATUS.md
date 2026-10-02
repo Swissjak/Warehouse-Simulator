@@ -51,18 +51,23 @@ Last updated: 2026-10-02
 - Vertical candidate position is rebuilt from actual support top, held-item pivot-to-bounds offset, pallet-relative rotation, and the existing pallet `MaxHeight` semantics.
 - Each packed box receives a runtime `PackedPallet` ObjectValue pointing to the exact pallet Model; the association is cleared on pickup or non-pallet placement and is server-validated for every pallet stack request.
 - Stable single-support columns are supported; bridge placement, partial support, and multi-support physics packing remain out of scope.
+- Stage 05D server-authoritative pallet contents registry is complete and Studio-tested.
+- `PalletRegistry` keeps runtime state per physical pallet Model plus a reverse item-to-pallet mapping; each physical box remains an individual world Model and no authoritative CFrame copy is stored.
+- Successful pallet placement adds the item to registry state, while pickup removes it before carry; repeated adds are idempotent and one item cannot belong to multiple pallets.
+- Registry totals, per-`ItemId` counts, distinct count, contents, and physical loaded height are queryable; `CargoCount`, `DistinctItemCount`, and `LoadedHeight` are informational pallet attributes only.
+- Item and pallet destruction clean runtime references, and explicit `Recalculate` restores one pallet from physical Models and service-managed `PackedPallet` associations.
+- `FormatContents` and `PrintContents` provide opt-in server-side diagnostics without automatic placement logging.
 
 ## Current milestone
-**Stage 05C — Multi-Layer Pallet Packing — Complete and Studio-tested**
+**Stage 05D — Pallet Contents Registry — Complete and Studio-tested**
 
-Stages 01A Rack Geometry, 01B Slot Registry, 01C Slot Labels / Rack Numbers, 04A Basic Interaction / Carry, 04B Placement Preview, 04C Extended Placement / Identical Item Stacking, 05A Pallet Detection + Single Box Snap, 05B First-Layer Pallet Packing, and 05C Multi-Layer Pallet Packing are complete.
+Stages 01A Rack Geometry, 01B Slot Registry, 01C Slot Labels / Rack Numbers, 04A Basic Interaction / Carry, 04B Placement Preview, 04C Extended Placement / Identical Item Stacking, 05A Pallet Detection + Single Box Snap, 05B First-Layer Pallet Packing, 05C Multi-Layer Pallet Packing, and 05D Pallet Contents Registry are complete.
 
-The next milestone is Stage 05D Pallet Contents Registry.
+The next milestone is TSD/scanning.
 
 ## Not implemented yet
 - Product/box systems.
 - Slot snapping, Slot occupancy, and horizontal multi-product packing.
-- Server-authoritative pallet contents registry.
 - TSD/scanning.
 - Receiving.
 - ITEM/FAST runtime logic.
@@ -81,8 +86,8 @@ The next milestone is Stage 05D Pallet Contents Registry.
 7. 05A Pallet Detection + Single Box Snap. **Complete.**
 8. 05B First-Layer Pallet Packing. **Complete.**
 9. 05C Multi-Layer Pallet Packing. **Complete.**
-10. 05D Pallet Contents Registry. **Next.**
-11. TSD/scanning.
+10. 05D Pallet Contents Registry. **Complete.**
+11. TSD/scanning. **Next.**
 12. Receiving.
 13. ITEM/FAST workflows.
 14. Putaway.
