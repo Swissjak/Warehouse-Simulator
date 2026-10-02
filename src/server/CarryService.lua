@@ -9,6 +9,7 @@ local CarryConfig = require(WarehouseShared:WaitForChild("CarryConfig"))
 local CarryItem = require(WarehouseShared:WaitForChild("CarryItem"))
 local PlacementGeometry = require(WarehouseShared:WaitForChild("PlacementGeometry"))
 local PlacementRules = require(WarehouseShared:WaitForChild("PlacementRules"))
+local PalletPlacementRules = require(WarehouseShared:WaitForChild("PalletPlacementRules"))
 local SlotRegistry = require(script.Parent.SlotRegistry)
 
 local CarryService = {}
@@ -284,13 +285,16 @@ local function hasCollidableOverlap(boundsCFrame: CFrame, boundsSize: Vector3, i
 	return false
 end
 
-local function orientationMatchesRotationStep(requestedCFrame: CFrame, rotationStep: number): boolean
-	local expectedRotation = PlacementGeometry.GetYawRotation(rotationStep)
+local function orientationMatches(requestedCFrame: CFrame, expectedRotation: CFrame): boolean
 	local minimumDot = CarryConfig.PlacementOrientationDotTolerance
 
 	return requestedCFrame.RightVector:Dot(expectedRotation.RightVector) >= minimumDot
 		and requestedCFrame.UpVector:Dot(expectedRotation.UpVector) >= minimumDot
 		and requestedCFrame.LookVector:Dot(expectedRotation.LookVector) >= minimumDot
+end
+
+local function orientationMatchesRotationStep(requestedCFrame: CFrame, rotationStep: number): boolean
+	return orientationMatches(requestedCFrame, PlacementGeometry.GetYawRotation(rotationStep))
 end
 
 local function getRegisteredSlotMaxHeight(worldPosition: Vector3): number?
@@ -317,23 +321,77 @@ local function getRegisteredSlotMaxHeight(worldPosition: Vector3): number?
 	return nil
 end
 
-local function validatePlacement(player: Player, requestedCFrame: CFrame, rotationStep: number): CFrame?
+local function validatePalletPlacement(
+	state: HoldState,
+	character: Model,
+	humanoidRootPart: BasePart,
+	requestedCFrame: CFrame,
+	rotationStep: number,
+	boundsInfo: PlacementGeometry.BoundsInfo,
+	palletInfo: PalletPlacementRules.PalletInfo
+): CFrame?
+	local expectedCFrame = PalletPlacementRules.CreateCandidateCFrame(
+		palletInfo.loadArea,
+		rotationStep,
+		boundsInfo
+	)
+	if not orientationMatches(requestedCFrame, expectedCFrame) then
+		return nil
+	end
+	if (requestedCFrame.Position - expectedCFrame.Position).Magnitude > CarryConfig.PlacementPositionTolerance then
+		return nil
+	end
+
+	local maximumDistance = CarryConfig.PlacementDistance + CarryConfig.ServerDistanceTolerance
+	if (humanoidRootPart.Position - expectedCFrame.Position).Magnitude > maximumDistance then
+		return nil
+	end
+
+	local candidateBoundsCFrame, candidateBoundsSize = PlacementGeometry.GetWorldBounds(expectedCFrame, boundsInfo)
+	if
+		not PalletPlacementRules.DoesFootprintFit(
+			palletInfo.loadArea,
+			candidateBoundsCFrame,
+			candidateBoundsSize
+		)
+		or not PalletPlacementRules.IsHeightValid(palletInfo, candidateBoundsCFrame, candidateBoundsSize)
+	then
+		return nil
+	end
+
+	local ignoredInstances: { Instance } = { character, state.item }
+	if not PalletPlacementRules.IsEmpty(palletInfo, ignoredInstances) then
+		return nil
+	end
+	if hasCollidableOverlap(candidateBoundsCFrame, candidateBoundsSize, ignoredInstances) then
+		return nil
+	end
+
+	return expectedCFrame
+end
+
+local function validatePlacement(
+	player: Player,
+	requestedCFrame: CFrame,
+	rotationStep: number,
+	requestedPalletValue: unknown
+): (CFrame?, Model?)
 	local state = heldByPlayer[player]
 	if state == nil then
-		return nil
+		return nil, nil
 	end
 
 	local character = player.Character
 	if character == nil then
-		return nil
+		return nil, nil
 	end
 	local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
 	if humanoidRootPart == nil or not humanoidRootPart:IsA("BasePart") then
-		return nil
+		return nil, nil
 	end
 
 	if state.item.Parent == nil or not state.item:IsDescendantOf(Workspace) or state.root.Parent == nil then
-		return nil
+		return nil, nil
 	end
 	if
 		not PlacementGeometry.IsFiniteVector3(requestedCFrame.Position)
@@ -341,18 +399,80 @@ local function validatePlacement(player: Player, requestedCFrame: CFrame, rotati
 		or not PlacementGeometry.IsFiniteVector3(requestedCFrame.UpVector)
 		or not PlacementGeometry.IsFiniteVector3(requestedCFrame.LookVector)
 	then
-		return nil
-	end
-	if not orientationMatchesRotationStep(requestedCFrame, rotationStep) then
-		return nil
+		return nil, nil
 	end
 
 	local maximumDistance = CarryConfig.PlacementDistance + CarryConfig.ServerDistanceTolerance
 	if (humanoidRootPart.Position - requestedCFrame.Position).Magnitude > maximumDistance then
-		return nil
+		return nil, nil
 	end
 
 	local boundsInfo = PlacementGeometry.GetBoundsInfo(state.item)
+	if requestedPalletValue ~= nil then
+		if typeof(requestedPalletValue) ~= "Instance" or not requestedPalletValue:IsA("Model") then
+			return nil, nil
+		end
+
+		local requestedPalletInfo = PalletPlacementRules.GetPalletInfo(requestedPalletValue)
+		if requestedPalletInfo == nil then
+			return nil, nil
+		end
+
+		local validatedPalletCFrame = validatePalletPlacement(
+			state,
+			character,
+			humanoidRootPart,
+			requestedCFrame,
+			rotationStep,
+			boundsInfo,
+			requestedPalletInfo
+		)
+		if validatedPalletCFrame == nil then
+			return nil, nil
+		end
+		return validatedPalletCFrame, requestedPalletInfo.model
+	end
+
+	local requestedBoundsCFrame, requestedBoundsSize = PlacementGeometry.GetWorldBounds(requestedCFrame, boundsInfo)
+	local requestedBottomY = PlacementGeometry.GetBoundsBottomY(requestedBoundsCFrame, requestedBoundsSize)
+	local palletProbeParams = RaycastParams.new()
+	palletProbeParams.FilterType = Enum.RaycastFilterType.Exclude
+	palletProbeParams.FilterDescendantsInstances = { character, state.item }
+	palletProbeParams.IgnoreWater = true
+	local palletProbeOrigin = Vector3.new(
+		requestedBoundsCFrame.Position.X,
+		requestedBottomY + CarryConfig.PlacementSurfaceProbeAbove,
+		requestedBoundsCFrame.Position.Z
+	)
+	local palletProbeDistance = CarryConfig.PlacementSurfaceProbeAbove + CarryConfig.PlacementSurfaceProbeBelow
+	local palletProbeResult = Workspace:Raycast(
+		palletProbeOrigin,
+		Vector3.new(0, -palletProbeDistance, 0),
+		palletProbeParams
+	)
+	local detectedPalletInfo = if palletProbeResult ~= nil
+		then PalletPlacementRules.FindPalletInfo(palletProbeResult.Instance)
+		else nil
+	if detectedPalletInfo ~= nil then
+		local validatedPalletCFrame = validatePalletPlacement(
+			state,
+			character,
+			humanoidRootPart,
+			requestedCFrame,
+			rotationStep,
+			boundsInfo,
+			detectedPalletInfo
+		)
+		if validatedPalletCFrame == nil then
+			return nil, nil
+		end
+		return validatedPalletCFrame, detectedPalletInfo.model
+	end
+
+	if not orientationMatchesRotationStep(requestedCFrame, rotationStep) then
+		return nil, nil
+	end
+
 	local candidateCFrame = CFrame.new(requestedCFrame.Position) * PlacementGeometry.GetYawRotation(rotationStep)
 	local boundsCFrame, boundsSize = PlacementGeometry.GetWorldBounds(candidateCFrame, boundsInfo)
 	local candidateBottomY = PlacementGeometry.GetBoundsBottomY(boundsCFrame, boundsSize)
@@ -374,7 +494,7 @@ local function validatePlacement(player: Player, requestedCFrame: CFrame, rotati
 		or not surfaceResult.Instance.CanCollide
 		or surfaceResult.Normal.Y < CarryConfig.PlacementSurfaceNormalMinY
 	then
-		return nil
+		return nil, nil
 	end
 
 	local stackSupport = CarryItem.FindCarryableModel(surfaceResult.Instance)
@@ -385,11 +505,11 @@ local function validatePlacement(player: Player, requestedCFrame: CFrame, rotati
 			or not stackSupport:IsDescendantOf(Workspace)
 			or not PlacementRules.HaveMatchingItemIds(state.item, stackSupport)
 		then
-			return nil
+			return nil, nil
 		end
 	end
 	if math.abs(surfaceResult.Position.Y - candidateBottomY) > CarryConfig.PlacementSurfaceHeightTolerance then
-		return nil
+		return nil, nil
 	end
 
 	local validatedCFrame = if stackSupport ~= nil
@@ -400,10 +520,10 @@ local function validatePlacement(player: Player, requestedCFrame: CFrame, rotati
 			boundsInfo
 		)
 	if (requestedCFrame.Position - validatedCFrame.Position).Magnitude > CarryConfig.PlacementPositionTolerance then
-		return nil
+		return nil, nil
 	end
 	if (humanoidRootPart.Position - validatedCFrame.Position).Magnitude > maximumDistance then
-		return nil
+		return nil, nil
 	end
 
 	local validatedBoundsCFrame, validatedBoundsSize = PlacementGeometry.GetWorldBounds(validatedCFrame, boundsInfo)
@@ -423,27 +543,32 @@ local function validatePlacement(player: Player, requestedCFrame: CFrame, rotati
 	local effectiveMaxHeight = slotMaxHeight or CarryConfig.DefaultFreeStackMaxHeight
 	local stackHeight = candidateTopY - stackBottomY
 	if stackHeight > effectiveMaxHeight + CarryConfig.StackHeightTolerance then
-		return nil
+		return nil, nil
 	end
 
 	if stackSupport ~= nil then
 		table.insert(ignoredInstances, stackSupport)
 	end
 	if hasCollidableOverlap(validatedBoundsCFrame, validatedBoundsSize, ignoredInstances) then
-		return nil
+		return nil, nil
 	end
 
-	return validatedCFrame
+	return validatedCFrame, nil
 end
 
-local function placeHeldItem(player: Player, requestedCFrameValue: unknown, rotationStepValue: unknown)
+local function placeHeldItem(
+	player: Player,
+	requestedCFrameValue: unknown,
+	rotationStepValue: unknown,
+	requestedPalletValue: unknown
+)
 	if typeof(requestedCFrameValue) ~= "CFrame" or not PlacementGeometry.IsRotationStep(rotationStepValue) then
 		return
 	end
 
 	local requestedCFrame = requestedCFrameValue :: CFrame
 	local rotationStep = rotationStepValue :: number
-	local validatedCFrame = validatePlacement(player, requestedCFrame, rotationStep)
+	local validatedCFrame, pallet = validatePlacement(player, requestedCFrame, rotationStep, requestedPalletValue)
 	if validatedCFrame == nil then
 		return
 	end
@@ -458,6 +583,14 @@ local function placeHeldItem(player: Player, requestedCFrameValue: unknown, rota
 		state.anchor:Destroy()
 	end
 	state.item:PivotTo(validatedCFrame)
+	if pallet ~= nil then
+		state.item:SetAttribute("PackedOnPallet", true)
+		local palletId = pallet:GetAttribute("ItemId")
+		state.item:SetAttribute("PalletId", if typeof(palletId) == "string" and palletId ~= "" then palletId else nil)
+	else
+		state.item:SetAttribute("PackedOnPallet", nil)
+		state.item:SetAttribute("PalletId", nil)
+	end
 	state.root.AssemblyLinearVelocity = Vector3.zero
 	state.root.AssemblyAngularVelocity = Vector3.zero
 	clearHeldState(player, false)
@@ -546,13 +679,19 @@ function CarryService.Start()
 
 	local remote = getOrCreateRemoteEvent()
 	carryRemote = remote
-	remote.OnServerEvent:Connect(function(player: Player, action: unknown, itemValue: unknown, extraValue: unknown)
+	remote.OnServerEvent:Connect(function(
+		player: Player,
+		action: unknown,
+		itemValue: unknown,
+		extraValue: unknown,
+		targetValue: unknown
+	)
 		if action == "Drop" then
 			dropHeldItem(player, true, true)
 			return
 		end
 		if action == "Place" then
-			placeHeldItem(player, itemValue, extraValue)
+			placeHeldItem(player, itemValue, extraValue, targetValue)
 			return
 		end
 

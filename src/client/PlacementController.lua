@@ -11,6 +11,7 @@ local CarryConfig = require(WarehouseShared:WaitForChild("CarryConfig"))
 local CarryItem = require(WarehouseShared:WaitForChild("CarryItem"))
 local PlacementGeometry = require(WarehouseShared:WaitForChild("PlacementGeometry"))
 local PlacementRules = require(WarehouseShared:WaitForChild("PlacementRules"))
+local PalletPlacementRules = require(WarehouseShared:WaitForChild("PalletPlacementRules"))
 
 local PlacementController = {}
 
@@ -38,6 +39,7 @@ local ghostParts: { BasePart } = {}
 local displayedValidity: boolean? = nil
 local boundsInfo: PlacementGeometry.BoundsInfo? = nil
 local candidateCFrame: CFrame? = nil
+local candidatePallet: Model? = nil
 local candidateIsValid = false
 local rotationStep = 0
 local lastPlaceRequestTime = 0
@@ -93,6 +95,7 @@ local function destroyGhost()
 	displayedValidity = nil
 	boundsInfo = nil
 	candidateCFrame = nil
+	candidatePallet = nil
 	candidateIsValid = false
 end
 
@@ -266,6 +269,7 @@ local function updateCandidate()
 	local camera = Workspace.CurrentCamera
 	if currentGhost == nil or currentItem == nil or currentBoundsInfo == nil or camera == nil then
 		candidateCFrame = nil
+		candidatePallet = nil
 		candidateIsValid = false
 		return
 	end
@@ -284,24 +288,31 @@ local function updateCandidate()
 	local viewportCenter = camera.ViewportSize / 2
 	local ray = camera:ViewportPointToRay(viewportCenter.X, viewportCenter.Y)
 	local result = Workspace:Raycast(ray.Origin, ray.Direction * CarryConfig.PlacementRayDistance, raycastParams)
+	local palletInfo = if result ~= nil then PalletPlacementRules.FindPalletInfo(result.Instance) else nil
 	local raycastSupport = if result ~= nil then CarryItem.FindCarryableModel(result.Instance) else nil
 	local stackSupport = if raycastSupport ~= nil
+			and palletInfo == nil
 			and PlacementRules.HaveMatchingItemIds(currentItem, raycastSupport)
 		then raycastSupport
 		else nil
 	local surfacePoint = if result ~= nil
 		then result.Position
 		else ray.Origin + ray.Direction * CarryConfig.PlacementRayDistance
-	local newCandidateCFrame = if stackSupport ~= nil
+	local newCandidateCFrame = if palletInfo ~= nil
+		then PalletPlacementRules.CreateCandidateCFrame(palletInfo.loadArea, rotationStep, currentBoundsInfo)
+		elseif stackSupport ~= nil
 		then PlacementRules.CreateStackCandidateCFrame(stackSupport, rotationStep, currentBoundsInfo)
 		else PlacementGeometry.CreateCandidateCFrame(surfacePoint, rotationStep, currentBoundsInfo)
 	currentGhost:PivotTo(newCandidateCFrame)
 	candidateCFrame = newCandidateCFrame
+	candidatePallet = if palletInfo ~= nil then palletInfo.model else nil
 
-	local surfaceIsValid = result ~= nil
-		and result.Normal.Y >= CarryConfig.PlacementSurfaceNormalMinY
-		and result.Instance.CanCollide
-		and (raycastSupport == nil or stackSupport ~= nil)
+	local surfaceIsValid = if palletInfo ~= nil
+		then result ~= nil
+		else result ~= nil
+			and result.Normal.Y >= CarryConfig.PlacementSurfaceNormalMinY
+			and result.Instance.CanCollide
+			and (raycastSupport == nil or stackSupport ~= nil)
 
 	local humanoidRootPart = if character ~= nil then character:FindFirstChild("HumanoidRootPart") else nil
 	local distanceIsValid = humanoidRootPart ~= nil
@@ -316,6 +327,28 @@ local function updateCandidate()
 	end
 	overlapParams.FilterDescendantsInstances = overlapIgnoredInstances
 	local overlapIsValid = not hasCollidableOverlap(candidateBoundsCFrame, candidateBoundsSize)
+	if palletInfo ~= nil then
+		local footprintIsValid = PalletPlacementRules.DoesFootprintFit(
+			palletInfo.loadArea,
+			candidateBoundsCFrame,
+			candidateBoundsSize
+		)
+		local heightIsValid = PalletPlacementRules.IsHeightValid(
+			palletInfo,
+			candidateBoundsCFrame,
+			candidateBoundsSize
+		)
+		local palletIsEmpty = PalletPlacementRules.IsEmpty(palletInfo, ignoredInstances)
+
+		candidateIsValid = surfaceIsValid
+			and distanceIsValid
+			and footprintIsValid
+			and heightIsValid
+			and palletIsEmpty
+			and overlapIsValid
+		setGhostColor(candidateIsValid)
+		return
+	end
 
 	local candidateBottomY = PlacementGeometry.GetBoundsBottomY(candidateBoundsCFrame, candidateBoundsSize)
 	local candidateTopY = PlacementGeometry.GetBoundsTopY(candidateBoundsCFrame, candidateBoundsSize)
@@ -358,7 +391,7 @@ function PlacementController.TryPlace()
 	end
 	lastPlaceRequestTime = now
 
-	carryRemote:FireServer("Place", candidateCFrame, rotationStep)
+	carryRemote:FireServer("Place", candidateCFrame, rotationStep, candidatePallet)
 end
 
 function PlacementController.Start()
