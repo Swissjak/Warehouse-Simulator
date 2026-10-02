@@ -57,16 +57,21 @@ Last updated: 2026-10-02
 - Registry totals, per-`ItemId` counts, distinct count, contents, and physical loaded height are queryable; `CargoCount`, `DistinctItemCount`, and `LoadedHeight` are informational pallet attributes only.
 - Item and pallet destruction clean runtime references, and explicit `Recalculate` restores one pallet from physical Models and service-managed `PackedPallet` associations.
 - `FormatContents` and `PrintContents` provide opt-in server-side diagnostics without automatic placement logging.
+- Stage 06A product catalog and barcode labels are complete and Studio-tested across `TEST_BOX`, `TEST_BOX_B`, `TEST_BOX_W`, `TEST_BOX_G`, and `TEST_BOX_P`.
+- Shared `ProductCatalog` maps each supported `ItemId` to immutable `DisplayName` and `Barcode` values, validates non-empty strings and unique barcodes, and provides `Get`, `GetByBarcode`, and `Exists` lookups.
+- `ItemId` is the canonical product identifier used by persistence, pallet contents, ITEM/FAST, and other gameplay systems.
+- `Barcode` is an immutable unique lookup/scanning identifier stored as a string and is never the primary persistence key; visual barcode rendering may change without changing its catalog value.
+- `ProductService` applies catalog metadata and an idempotent deterministic label to each authored `BarcodeSurface` without changing the Part's transform, size, weld, or physics properties.
+- Barcode labels use the authored outward `Enum.NormalId.Back` face, and repeated `ApplyToItem` calls update the existing `BarcodeGui` instead of creating duplicates.
 
 ## Current milestone
-**Stage 05D — Pallet Contents Registry — Complete and Studio-tested**
+**Stage 06A — Product Catalog + Barcode Labels — Complete and Studio-tested**
 
-Stages 01A Rack Geometry, 01B Slot Registry, 01C Slot Labels / Rack Numbers, 04A Basic Interaction / Carry, 04B Placement Preview, 04C Extended Placement / Identical Item Stacking, 05A Pallet Detection + Single Box Snap, 05B First-Layer Pallet Packing, 05C Multi-Layer Pallet Packing, and 05D Pallet Contents Registry are complete.
+Stages 01A Rack Geometry, 01B Slot Registry, 01C Slot Labels / Rack Numbers, 04A Basic Interaction / Carry, 04B Placement Preview, 04C Extended Placement / Identical Item Stacking, 05A Pallet Detection + Single Box Snap, 05B First-Layer Pallet Packing, 05C Multi-Layer Pallet Packing, 05D Pallet Contents Registry, and 06A Product Catalog + Barcode Labels are complete.
 
 The next milestone is TSD/scanning.
 
 ## Not implemented yet
-- Product/box systems.
 - Slot snapping, Slot occupancy, and horizontal multi-product packing.
 - TSD/scanning.
 - Receiving.
@@ -87,11 +92,12 @@ The next milestone is TSD/scanning.
 8. 05B First-Layer Pallet Packing. **Complete.**
 9. 05C Multi-Layer Pallet Packing. **Complete.**
 10. 05D Pallet Contents Registry. **Complete.**
-11. TSD/scanning. **Next.**
-12. Receiving.
-13. ITEM/FAST workflows.
-14. Putaway.
-15. Co-op/persistence.
+11. 06A Product Catalog + Barcode Labels. **Complete.**
+12. TSD/scanning. **Next.**
+13. Receiving.
+14. ITEM/FAST workflows.
+15. Putaway.
+16. Co-op/persistence.
 
 ## Update rule
 Only mark a milestone complete after successful Roblox Studio testing.

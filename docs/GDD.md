@@ -41,7 +41,16 @@ TV/long-TV-like goods use one layer only.
 ## Physical box identity
 Boxes of the same product model are interchangeable to the player.
 The product barcode identifies the model, not a unique physical serial.
-Internally each box may still be a server entity with ProductId/state/container/location.
+Internally each box may still be a server entity with ItemId/state/container/location.
+
+Product identity rules:
+- `ItemId` is the canonical product identifier.
+- The same `ItemId` always resolves to the same immutable `Barcode`.
+- Different `ItemId` values cannot share a `Barcode`.
+- `Barcode` is stored as a string and is used only for scanning, lookup, and reverse lookup through `ProductCatalog.GetByBarcode()`.
+- Persistence, pallet contents, ITEM/FAST, and other gameplay systems reference products by `ItemId`, never by `Barcode` as a primary key.
+- Visual barcode patterns are presentation only; changing their rendering must not change the catalog `Barcode` value.
+- Do not describe catalog barcodes as EAN13 or GTIN until a real corresponding standard is implemented.
 
 ## ITEM
 ITEM is a temporary receiving/putaway grouping, not a permanent stock ID and not a pallet ID.
