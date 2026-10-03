@@ -1,5 +1,5 @@
 # Warehouse Simulator — Development Status
-Last updated: 2026-10-02
+Last updated: 2026-10-03
 
 ## Completed / prepared
 - Initial warehouse blockout exists in Roblox Studio.
@@ -63,17 +63,21 @@ Last updated: 2026-10-02
 - `Barcode` is an immutable unique lookup/scanning identifier stored as a string and is never the primary persistence key; visual barcode rendering may change without changing its catalog value.
 - `ProductService` applies catalog metadata and an idempotent deterministic label to each authored `BarcodeSurface` without changing the Part's transform, size, weld, or physics properties.
 - Barcode labels use the authored outward `Enum.NormalId.Back` face, and repeated `ApplyToItem` calls update the existing `BarcodeGui` instead of creating duplicates.
+- Stage 07A TSD / Scanner Core is complete and Studio-tested.
+- `ScannerController` provides explicit enabled state, center-camera box targeting up to 12 studs, one scanner-specific runtime `Highlight`, temporary result UI, Q mode toggle, and LMB scan input without changing the existing E/R carry and placement controls.
+- Scanner requests are server-authoritative: the client sends only the intended physical target Instance, while `ScannerService` independently resolves the Box Model and validates character state, Workspace membership, `ItemType`, `ItemId`, distance, line of sight, catalog membership, and a per-player request cooldown.
+- Successful scans resolve product identity through `ItemId -> ProductCatalog` and return only serializable `ItemId`, `Barcode`, and `DisplayName` data; replicated barcode attributes and the visual barcode image are not trusted or read as scan input.
+- Scanner Core contains no receiving, ITEM, or FAST workflow logic. `ScannerController.ScanCompleted` and `ScannerService.ScanSucceeded` provide clean event boundaries for future workflow systems without adding a third-party signal dependency.
 
 ## Current milestone
-**Stage 06A — Product Catalog + Barcode Labels — Complete and Studio-tested**
+**Stage 07A — TSD / Scanner Core — Complete and Studio-tested**
 
-Stages 01A Rack Geometry, 01B Slot Registry, 01C Slot Labels / Rack Numbers, 04A Basic Interaction / Carry, 04B Placement Preview, 04C Extended Placement / Identical Item Stacking, 05A Pallet Detection + Single Box Snap, 05B First-Layer Pallet Packing, 05C Multi-Layer Pallet Packing, 05D Pallet Contents Registry, and 06A Product Catalog + Barcode Labels are complete.
+Stages 01A Rack Geometry, 01B Slot Registry, 01C Slot Labels / Rack Numbers, 04A Basic Interaction / Carry, 04B Placement Preview, 04C Extended Placement / Identical Item Stacking, 05A Pallet Detection + Single Box Snap, 05B First-Layer Pallet Packing, 05C Multi-Layer Pallet Packing, 05D Pallet Contents Registry, 06A Product Catalog + Barcode Labels, and 07A TSD / Scanner Core are complete.
 
-The next milestone is TSD/scanning.
+The next milestone is receiving.
 
 ## Not implemented yet
 - Slot snapping, Slot occupancy, and horizontal multi-product packing.
-- TSD/scanning.
 - Receiving.
 - ITEM/FAST runtime logic.
 - Putaway.
@@ -93,8 +97,8 @@ The next milestone is TSD/scanning.
 9. 05C Multi-Layer Pallet Packing. **Complete.**
 10. 05D Pallet Contents Registry. **Complete.**
 11. 06A Product Catalog + Barcode Labels. **Complete.**
-12. TSD/scanning. **Next.**
-13. Receiving.
+12. TSD/scanning. **Complete.**
+13. Receiving. **Next.**
 14. ITEM/FAST workflows.
 15. Putaway.
 16. Co-op/persistence.

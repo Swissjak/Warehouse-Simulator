@@ -4,11 +4,13 @@ local ProductService = require(script.Parent.ProductService)
 local RackGenerator = require(script.Parent.RackGenerator)
 local RackLabelService = require(script.Parent.RackLabelService)
 local RackNumberService = require(script.Parent.RackNumberService)
+local ScannerService = require(script.Parent.ScannerService)
 local SlotRegistry = require(script.Parent.SlotRegistry)
 
 ProductService.Start()
 PalletRegistry.Start()
 CarryService.Start()
+ScannerService.Start()
 
 local generatedRacks = RackGenerator.Generate()
 if generatedRacks ~= nil then
